@@ -5,3 +5,5 @@ StartProcess @2
 GetFileVersion @3
 TL_BlockGameResumeThread @4
 ConfigureHooks_F3 @5
+Shutdown_F3 @6
+SessionActive_F3 @7

@@ -8,6 +8,7 @@
 #include "../../../hypervisor_routines.h"
 #include "../../../Vmcs/VmcsApi.h"
 #include "../../../../Common/Ring0/Hvm/DebuggerVisibilityPolicy.h"
+#include "../../../../Common/Ring0/Hvm/TrampolineInstructionPolicy.h"
 
 namespace ept
 {
@@ -23,25 +24,30 @@ namespace ept
 			const void* target_function,
 			unsigned __int64 page_offset,
 			unsigned __int64 min_bytes,
-			unsigned __int64& hooked_instructions_size)
+			unsigned __int64& hooked_instructions_size,
+            bool require_position_independent)
 		{
 			hooked_instructions_size = 0;
+            if (!target_function || page_offset >= kEptPageSize || min_bytes == 0 ||
+                min_bytes > kEptPageSize - page_offset) return false;
 
-			while (hooked_instructions_size < min_bytes)
-			{
-				const size_t instruction_length = LDE(
-					reinterpret_cast<const unsigned __int8*>(target_function) + hooked_instructions_size,
-					64);
-
-				// LDE 解码失败返回 0：按 0 递增会让本循环永不退出，物理 CPU 会卡在 VMX root 态。
-				if (instruction_length == 0 ||
-					instruction_length > kMaxInstructionLength)
-				{
-					return false;
-				}
-
-				hooked_instructions_size += instruction_length;
-			}
+            while (hooked_instructions_size < min_bytes)
+            {
+                const auto remaining = kEptPageSize - page_offset - hooked_instructions_size;
+                if (!remaining) return false;
+                const auto available = remaining < kMaxInstructionLength ? remaining : kMaxInstructionLength;
+                // LDE has no input length. A padded local buffer prevents it reading
+                // the next guest page before we can reject a cross-page instruction.
+                unsigned __int8 instruction[32] = {};
+                RtlCopyMemory(instruction,
+                    reinterpret_cast<const unsigned __int8*>(target_function) + hooked_instructions_size,
+                    static_cast<SIZE_T>(available));
+                const size_t length = LDE(instruction, 64);
+                if (length == 0 || length > kMaxInstructionLength || length > available ||
+                    (require_position_independent && !hv::trampoline_policy::CanCopyVerbatim(instruction, length)))
+                    return false;
+                hooked_instructions_size += length;
+            }
 
 			// 跳板后面还要写一个 kAbsoluteJumpSize 的绝对跳转，必须在固定池缓冲区内完成。
 			if (hooked_instructions_size > kTrampolineBufferSize - kAbsoluteJumpSize)
@@ -288,18 +294,26 @@ namespace ept
 		}
 	}
 
-	bool initialize_fake_page_from_target(__ept_hooked_page_info* hooked_page_info, const void* target_function)
-	{
-		const unsigned __int64 target_address =
-			reinterpret_cast<unsigned __int64>(target_function);
-		const unsigned __int64 target_page_base =
-			page_align_down(target_address);
-		RtlCopyMemory(
-			hooked_page_info->fake_page_contents,
-			reinterpret_cast<const void*>(target_page_base),
-			kEptPageSize);
-		return true;
-	}
+    bool initialize_fake_page_from_physical(__ept_hooked_page_info* page, unsigned __int64 physical_address)
+    {
+        if (!page || !physical_address) return false;
+        hv::host_exception_info exception = {};
+        hv::memcpy_safe(exception, page->fake_page_contents,
+            hv::host_physical_memory_base + page_align_down(physical_address), kEptPageSize);
+        return !exception.exception_occurred;
+    }
+
+    bool initialize_hooked_function_code(__ept_hooked_function_info* function, unsigned __int64 physical_address)
+    {
+        static_assert(sizeof(function->original_bytes) >= kTrampolineBufferSize, "Snapshot capacity");
+        if (!function || !physical_address) return false;
+        const auto remaining = kEptPageSize - (physical_address & (kEptPageSize - 1));
+        const auto count = remaining < sizeof(function->original_bytes) ? remaining : sizeof(function->original_bytes);
+        hv::host_exception_info exception = {};
+        hv::memcpy_safe(exception, function->original_bytes,
+            hv::host_physical_memory_base + physical_address, static_cast<SIZE_T>(count));
+        return !exception.exception_occurred;
+    }
 
 	/// <summary>
 	/// Write an absolute jump, We aren't touching any register except stack so it's the most safest trampoline
@@ -388,7 +402,7 @@ namespace ept
 	//			hooked_instructions_size += LDE((unsigned __int8*)target_function + hooked_instructions_size, 64);
 	//
 	//		hooked_function_info->hook_size = hooked_instructions_size;
-	//		RtlCopyMemory(hooked_function_info->first_trampoline_address, target_function, hooked_instructions_size);
+	//		RtlCopyMemory(hooked_function_info->first_trampoline_address, hooked_function_info->original_bytes, hooked_instructions_size);
 	//		hook_write_absolute_jump(&hooked_function_info->first_trampoline_address[hooked_instructions_size],
 	//			(unsigned __int64)target_function + hooked_instructions_size);
 	//		*origin_function = hooked_function_info->first_trampoline_address;
@@ -406,7 +420,7 @@ namespace ept
 
 		// 先完成解码与校验再改写伪造页：校验失败时不会留下半写入的指令。
 		unsigned __int64 hooked_instructions_size = 0;
-		if (decode_hooked_instructions_size(target_function, page_offset, 3, hooked_instructions_size) == false)
+		if (decode_hooked_instructions_size(hooked_function_info->original_bytes, page_offset, 3, hooked_instructions_size, origin_function != nullptr) == false)
 		{
 			LogError("解析被覆盖指令长度失败");
 			return false;
@@ -427,7 +441,7 @@ namespace ept
 
 			// Copy overwritten instructions to trampoline buffer
 			// 将覆盖的指令备份到跳板缓冲区
-			RtlCopyMemory(hooked_function_info->first_trampoline_address, target_function, hooked_instructions_size);
+			RtlCopyMemory(hooked_function_info->first_trampoline_address, hooked_function_info->original_bytes, hooked_instructions_size);
 
 			// Add the absolute jump back to the original function.
 			// 添加绝对跳转回到原来的函数
@@ -449,7 +463,7 @@ namespace ept
 
 		// 先完成解码与校验再改写伪造页：校验失败时不会留下半写入的指令。
 		unsigned __int64 hooked_instructions_size = 0;
-		if (decode_hooked_instructions_size(target_function, page_offset, 1, hooked_instructions_size) == false)
+		if (decode_hooked_instructions_size(hooked_function_info->original_bytes, page_offset, 1, hooked_instructions_size, origin_function != nullptr) == false)
 		{
 			LogError("解析被覆盖指令长度失败");
 			return false;
@@ -469,7 +483,7 @@ namespace ept
 
 			// Copy overwritten instructions to trampoline buffer
 			// 将覆盖的指令复制到跳板缓冲区
-			RtlCopyMemory(hooked_function_info->first_trampoline_address, target_function, hooked_instructions_size);
+			RtlCopyMemory(hooked_function_info->first_trampoline_address, hooked_function_info->original_bytes, hooked_instructions_size);
 
 			// Add the absolute jump back to the original function.
 			// 添加绝对跳转回到原来的函数
@@ -491,7 +505,7 @@ namespace ept
 
 		// 先完成解码与校验再改写伪造页：校验失败时不会留下半写入的指令。
 		unsigned __int64 hooked_instructions_size = 0;
-		if (decode_hooked_instructions_size(target_function, page_offset, 1, hooked_instructions_size) == false)
+		if (decode_hooked_instructions_size(hooked_function_info->original_bytes, page_offset, 1, hooked_instructions_size, origin_function != nullptr) == false)
 		{
 			LogError("解析被覆盖指令长度失败");
 			return false;
@@ -511,7 +525,7 @@ namespace ept
 
 			// Copy overwritten instructions to trampoline buffer
 			// 将覆盖的指令复制到跳板缓冲区
-			RtlCopyMemory(hooked_function_info->first_trampoline_address, target_function, hooked_instructions_size);
+			RtlCopyMemory(hooked_function_info->first_trampoline_address, hooked_function_info->original_bytes, hooked_instructions_size);
 
 			// Add the absolute jump back to the original function.
 			// 添加绝对跳转回到原来的函数
@@ -549,7 +563,7 @@ namespace ept
 
 		// Get the full size of instructions necessary to copy
 		// 解码并校验覆盖长度：解码失败或越界时直接失败，避免在 VM-exit 上下文里死循环。
-		if (decode_hooked_instructions_size(target_function, page_offset, kAbsoluteJumpSize, hooked_instructions_size) == false)
+		if (decode_hooked_instructions_size(hooked_function_info->original_bytes, page_offset, kAbsoluteJumpSize, hooked_instructions_size, origin_function != nullptr) == false)
 		{
 			LogError("解析被覆盖指令长度失败");
 			return false;
@@ -568,7 +582,7 @@ namespace ept
 		}
 
 		// Copy overwritten instructions to trampoline buffer
-		RtlCopyMemory(hooked_function_info->first_trampoline_address, target_function, hooked_instructions_size);
+		RtlCopyMemory(hooked_function_info->first_trampoline_address, hooked_function_info->original_bytes, hooked_instructions_size);
 
 		// Add the absolute jump back to the original function.
 		hook_write_absolute_jump(&hooked_function_info->first_trampoline_address[hooked_instructions_size], (unsigned __int64)target_function + hooked_instructions_size);

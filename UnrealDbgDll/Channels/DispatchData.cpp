@@ -10,6 +10,7 @@ BOOL DispatchDataToDriver(DWORD dwIoControlCode,
     DWORD nOutBufferSize,
     LPDWORD lpBytesReturned)
 {
+    std::lock_guard<std::recursive_mutex> lock(g_driverDeviceMutex);
     BOOL bRet = FALSE;
     if (g_hGeneralDriverDevice != INVALID_HANDLE_VALUE)
     {

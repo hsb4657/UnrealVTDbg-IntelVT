@@ -31,13 +31,12 @@
 #include "../EptHook.h"
 
 template <typename TSystemRoutine, typename THookRoutine>
-inline VOID HookEptRoutine(TSystemRoutine SystemRoutine,
+inline BOOLEAN HookEptRoutine(TSystemRoutine SystemRoutine,
     THookRoutine HookRoutine,
     PVOID* OriginalRoutine,
     const char* HookName,
     const char* SymbolName)
 {
-    ASSERT(SystemRoutine);
     if (SystemRoutine)
     {
         if (hvgt::hook_function(SystemRoutine, HookRoutine, OriginalRoutine))
@@ -48,6 +47,7 @@ inline VOID HookEptRoutine(TSystemRoutine SystemRoutine,
                 (PVOID)SystemRoutine,
                 (PVOID)HookRoutine,
                 (PVOID)(OriginalRoutine != NULL ? *OriginalRoutine : NULL));
+            return TRUE;
         }
         else
         {
@@ -63,4 +63,5 @@ inline VOID HookEptRoutine(TSystemRoutine SystemRoutine,
         outLog("Sys_%s为空指针.", SymbolName);
         outFile("hook %s SKIPPED symbol=%s", HookName, SymbolName);
     }
+    return FALSE;
 }

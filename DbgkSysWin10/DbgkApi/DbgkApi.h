@@ -30,10 +30,23 @@ public:
         InterlockedIncrement(&g_DbgkActiveRuntimeCallCount);
     }
 
-    ~DbgkRuntimeCallGuard()
+    ~DbgkRuntimeCallGuard() { Release(); }
+
+    // Terminal calls (PspExitThread) never run C++ destructors. Release the state
+    // reference explicitly after the last state access and before transferring control.
+    void Release()
     {
-        InterlockedDecrement(&g_DbgkActiveRuntimeCallCount);
+        if (active_)
+        {
+            active_ = false;
+            InterlockedDecrement(&g_DbgkActiveRuntimeCallCount);
+        }
     }
+
+    DbgkRuntimeCallGuard(const DbgkRuntimeCallGuard&) = delete;
+    DbgkRuntimeCallGuard& operator=(const DbgkRuntimeCallGuard&) = delete;
+private:
+    bool active_ = true;
 };
 
 #include "Api/DebugObjectCommon.h"

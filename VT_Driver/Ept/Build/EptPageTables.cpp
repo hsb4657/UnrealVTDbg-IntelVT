@@ -1,5 +1,6 @@
 ﻿#include "EptBuildInternal.h"
 #include <Ring0/Hvm/EptCoveragePolicy.h>
+#include <cstddef>
 
 namespace ept
 {
@@ -317,7 +318,15 @@ namespace ept
 	bool create_ept_page_table(__ept_state& ept_state)
 	{
 		outFile("---------- EPT页表构建开始 ----------");
-		ept_state.ept_page_table = allocate_page_aligned_pool<__vmm_ept_page_table*>(sizeof(__vmm_ept_page_table));
+		// ExAllocatePoolWithTag allocations >= PAGE_SIZE are page aligned and nonpaged.
+        // Each hardware table occupies one page; links below resolve each page's PA
+        // independently, so physical adjacency between tables is unnecessary.
+        static_assert(sizeof(__vmm_ept_page_table) >= PAGE_SIZE, "EPT allocation must be page aligned");
+        static_assert(offsetof(__vmm_ept_page_table, pml4) % PAGE_SIZE == 0, "PML4 alignment");
+        static_assert(offsetof(__vmm_ept_page_table, pml3) % PAGE_SIZE == 0, "PDPT alignment");
+        static_assert(offsetof(__vmm_ept_page_table, pml3_rsvd) % PAGE_SIZE == 0, "Extended PDPT alignment");
+        static_assert(offsetof(__vmm_ept_page_table, pml2) % PAGE_SIZE == 0, "PD alignment");
+        ept_state.ept_page_table = allocate_pool<__vmm_ept_page_table*>(sizeof(__vmm_ept_page_table));
 		if (ept_state.ept_page_table == NULL)
 		{
 			outDebug("PageTable 内存分配失败。\n");
@@ -339,7 +348,7 @@ namespace ept
 		{
 			outFile("[失败][EPT页表] 所需PDPT数量为0，停止EPT构建");
 			cleanup_page_table(ept_state); // 清理已缓存的RAM范围，避免极端物理地址上界失败时泄漏。
-			free_vmm_page_aligned(ept_state.ept_page_table);
+			free_pool(ept_state.ept_page_table);
 			ept_state.ept_page_table = nullptr;
 			return false;
 		}
@@ -363,7 +372,7 @@ namespace ept
 			outFile("[失败][EPT页表] PML2行指针表分配失败：Bytes=%llu",
 				static_cast<unsigned __int64>(sizeof(__ept_pde*) * ept_state.pml2_pages_count));
 			cleanup_page_table(ept_state);
-			free_vmm_page_aligned(ept_state.ept_page_table);
+			free_pool(ept_state.ept_page_table);
 			ept_state.ept_page_table = nullptr;
 			return false;
 		}
@@ -470,7 +479,7 @@ namespace ept
 					outDebug("setup_pml2_entry 失败\n");
 					outFile("[失败][EPT页表] PML2条目设置失败：FlatPDPT=%u PDE=%d PFN=%llu", i, j, pde_pfn);
 					cleanup_page_table(ept_state);
-					free_vmm_page_aligned(ept_state.ept_page_table);
+					free_pool(ept_state.ept_page_table);
 					ept_state.ept_page_table = nullptr;
 					return false;
 				}

@@ -434,7 +434,9 @@ namespace unrealdbg_native
 
     BackendState Runtime::State() const noexcept
     {
-        return state_.load(std::memory_order_acquire);
+        const auto state = state_.load(std::memory_order_acquire);
+        return state == BackendState::Initialized && sessionActive_ && !sessionActive_()
+            ? BackendState::Failed : state;
     }
 
     bool Runtime::IsInitializing() const noexcept
@@ -495,9 +497,12 @@ namespace unrealdbg_native
             configureHooks_ = reinterpret_cast<ConfigureHooksFn>(
                 ::GetProcAddress(backendModule_, "ConfigureHooks_F3"));
 
+            shutdown_ = reinterpret_cast<ShutdownFn>(::GetProcAddress(backendModule_, "Shutdown_F3"));
+            sessionActive_ = reinterpret_cast<SessionActiveFn>(::GetProcAddress(backendModule_, "SessionActive_F3"));
+
             if (initialize_ == nullptr || startProcess_ == nullptr ||
                 getFileVersion_ == nullptr || blockResumeThread_ == nullptr ||
-                configureHooks_ == nullptr)
+                configureHooks_ == nullptr || shutdown_ == nullptr || sessionActive_ == nullptr)
             {
                 WriteLog(LogLevel::Error,
                     L"UnrealDbgDll.dll 导出表不完整：" + candidate);
@@ -534,10 +539,11 @@ namespace unrealdbg_native
     {
         if (backendModule_ != nullptr)
         {
-            if (State() == BackendState::Initialized)
+            if (shutdown_ != nullptr && !shutdown_())
             {
                 WriteLog(LogLevel::Info,
-                    L"后端已进入 VT 初始化，DLL 将保留到进程退出，避免卸载运行中的代码");
+                    L"后端未能完全停止，保留 DLL 和依赖服务；请查看清理日志中的原因");
+                return;
             }
             else
             {
@@ -546,6 +552,8 @@ namespace unrealdbg_native
         }
         backendModule_ = nullptr;
         initialize_ = nullptr;
+        shutdown_ = nullptr;
+        sessionActive_ = nullptr;
         startProcess_ = nullptr;
         getFileVersion_ = nullptr;
         blockResumeThread_ = nullptr;
@@ -589,7 +597,7 @@ namespace unrealdbg_native
         }
         SetState(BackendState::Failed);
         WriteLog(LogLevel::Error,
-            L"VT 调试模式初始化失败；后端已执行自身回滚，未继续启动调试器");
+            L"VT 调试模式初始化失败；后端已尝试回滚；清理结果见日志，未继续启动调试器");
     }
 
     void Runtime::LoadSystemInformation()

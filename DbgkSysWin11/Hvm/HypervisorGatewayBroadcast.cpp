@@ -76,7 +76,8 @@ namespace hvgt
 			InterlockedIncrement16(&args->statuses);
 		}
 
-		SignalDpcDone(SystemArgument1, SystemArgument2);
+		// Read completion already has a barrier above; Done waits for all callbacks.
+		KeSignalCallDpcDone(SystemArgument1);
 	}
 
 	void broadcast_get_software_breakpoint_buffer(KDPC*, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
@@ -106,7 +107,8 @@ namespace hvgt
 			InterlockedIncrement16(&args->statuses);
 		}
 
-		SignalDpcDone(SystemArgument1, SystemArgument2);
+		// Read completion already has a barrier above; Done waits for all callbacks.
+		KeSignalCallDpcDone(SystemArgument1);
 	}
 
 	void broadcast_set_software_breakpoint_buffer(KDPC*, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)

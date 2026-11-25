@@ -15,6 +15,7 @@ PFN_UNLOADNT pfnUnloadNT;
 PFN_OUTDEBUG outDebug;
 HMODULE g_aiHelperModule;
 
+std::recursive_mutex g_driverDeviceMutex;
 HANDLE g_hGeneralDriverDevice = INVALID_HANDLE_VALUE;
 
 
@@ -75,9 +76,9 @@ namespace
             return DriverServiceState::QueryFailed;
         }
 
-        return serviceStatus.dwCurrentState == SERVICE_RUNNING
-            ? DriverServiceState::Running
-            : DriverServiceState::Stopped;
+        return serviceStatus.dwCurrentState == SERVICE_STOPPED
+            ? DriverServiceState::Stopped
+            : DriverServiceState::Running;
     }
 
     //等待驱动服务停止
@@ -353,6 +354,7 @@ BOOL LoadGeneralDriver(const std::wstring DriveImagePath, const std::wstring Ser
 //初始化驱动设备
 BOOL InitializeDevice(const std::wstring DriveImagePath)
 {
+    std::lock_guard<std::recursive_mutex> lock(g_driverDeviceMutex);
     BOOL bRet = TRUE;
 
     //if (!UnInitialize_END) {
@@ -479,45 +481,33 @@ BOOL _Initialize(const TCHAR* sPath)
 
 BOOL UnInitialize()
 {
-    BOOL boUnInit = TRUE;
-
+    // Drain an in-flight IOCTL before closing its handle; reject later requests.
+    std::lock_guard<std::recursive_mutex> lock(g_driverDeviceMutex);
     if (g_hGeneralDriverDevice != INVALID_HANDLE_VALUE)
     {
         CloseHandle(g_hGeneralDriverDevice);
         g_hGeneralDriverDevice = INVALID_HANDLE_VALUE;
     }
 
-    if (pfnUnloadNT == nullptr)
+    auto stop = [](const wchar_t* name) -> BOOL
     {
-        logger.outDebug(_xor_(L"卸载接口未初始化，跳过驱动停止。"));
+        auto state = QueryDriverServiceState(name);
+        if (state == DriverServiceState::NotFound || state == DriverServiceState::Stopped)
+            return TRUE;
+        if (state == DriverServiceState::QueryFailed || pfnUnloadNT == nullptr)
+            return FALSE;
+        // A helper's return value alone does not establish that the driver stopped.
+        (void)pfnUnloadNT(name);
+        state = QueryDriverServiceState(name);
+        return state == DriverServiceState::NotFound || state == DriverServiceState::Stopped;
+    };
+
+    if (!stop(L"UnrealDevice") || !stop(L"BACDevice"))
+    {
+        logger.outDebug(L"调试服务未确认停止，保留 VT 驱动，避免卸载仍被使用的代码。");
         return FALSE;
     }
-
-    if (pfnUnloadNT((L"UnrealDevice")))
-    {
-        outDebug(_xor_(L"Win10/Win11 调试服务停止成功。"));
-    }
-    else
-    {
-        outDebug(_xor_(L"Win10/Win11 调试服务停止失败或未运行。"));
-        boUnInit = FALSE;
-    }
-
-    if (pfnUnloadNT(_xor_(L"VT_Driver")))
-    {
-        outDebug(_xor_(L"VT 服务停止成功。"));
-    }
-    else
-    {
-        outDebug((L"VT 服务停止失败或未运行。"));
-        boUnInit = FALSE;
-    }
-
-    // 兼容旧版本残留服务名。此服务不是当前加载链路的必需依赖，放到最后清理。
-    if (pfnUnloadNT((L"BACDevice")))
-    {
-        outDebug(_xor_(L"旧版 BACDevice 服务停止成功。"));
-    }
-
-    return boUnInit;
+    const BOOL stopped = stop(L"VT_Driver");
+    logger.outDebug(stopped ? L"调试服务和 VT 服务已停止。" : L"VT 服务停止失败，请重试退出。");
+    return stopped;
 }

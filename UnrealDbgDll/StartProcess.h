@@ -3,6 +3,9 @@
 #ifndef _START_PROCESS_H
 #define _START_PROCESS_H
 
+void EnableStartupWorkers();
+void StopStartupWorkers();
+
 BOOL StartProcess(TCHAR* szExe, TCHAR* sPath);
 
 //根据光标位置获取进程pid

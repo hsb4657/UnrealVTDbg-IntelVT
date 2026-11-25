@@ -72,13 +72,14 @@ namespace pool_manager
 
             single_pool->physically_aligned = requires_physical_page_alignment(intention);
             single_pool->intention = intention;
-            single_pool->is_busy = false; //将内存标识为未使用
+            single_pool->state = POOL_FREE;
             single_pool->size = size;
 
             if (single_pool->physically_aligned)
             {
                 unsigned __int64 const physical_address =
                     MmGetPhysicalAddress(single_pool->address).QuadPart;
+                single_pool->physical_address = physical_address;
                 if ((physical_address & (PAGE_SIZE - 1)) != 0)
                 {
                     LogError("Physically aligned pool allocation returned unaligned memory");
@@ -104,6 +105,16 @@ namespace pool_manager
             InsertTailList(
                 g_vmm_context.pool_manager->list_of_allocated_pools,
                 entry);
+            auto* node = CONTAINING_RECORD(entry, __pool_table, pool_list);
+            auto* manager = g_vmm_context.pool_manager;
+            // This function has one publisher (perform_allocation's CAS gate).
+            // Publish the address index first so every consumable entry is releasable.
+            auto* address_head = &manager->by_address[pool_hash(node->address)];
+            node->next_address = load_pool_head(address_head);
+            InterlockedExchangePointer(address_head, node);
+            auto* intention_head = &manager->by_intention[node->intention];
+            node->next_intention = load_pool_head(intention_head);
+            InterlockedExchangePointer(intention_head, node);
         }
         KeReleaseSpinLock(
             &g_vmm_context.pool_manager->lock_for_reading_pool,
@@ -127,8 +138,8 @@ namespace pool_manager
             return false;
         }
 
-        if (KeGetCurrentIrql() != PASSIVE_LEVEL ||
-            is_current_context_vmx_root())
+        if (is_current_context_vmx_root() ||
+            KeGetCurrentIrql() != PASSIVE_LEVEL)
         {
             return false;
         }
@@ -140,6 +151,8 @@ namespace pool_manager
         {
             return false;
         }
+
+        recycle_released_pools();
 
         for (;;)
         {

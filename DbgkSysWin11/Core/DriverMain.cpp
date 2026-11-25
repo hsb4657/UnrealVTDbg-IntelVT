@@ -47,6 +47,7 @@ PWCHAR PassProcessList[12] = {
 
 namespace
 {
+    PDRIVER_OBJECT g_DbgkDriverObject = nullptr;
     const GUID kDbgkDeviceClassGuid =
     { 0x8d72cb34, 0xe7b0, 0x4d53, { 0x99, 0x4f, 0x43, 0x5b, 0x20, 0xd7, 0xb9, 0x1a } };
 
@@ -75,23 +76,32 @@ namespace
 }
 
 EXTERN_C
+VOID DisableDbgkHotUnload()
+{
+    // PspExitThread does not return; the state counter cannot prove that the
+    // caller has left the driver image/trampoline. Keep the image until reboot.
+    if (g_DbgkDriverObject != nullptr)
+    {
+        g_DbgkDriverObject->DriverUnload = nullptr;
+        KeMemoryBarrier();
+        outLog("Driver execution/callback lifetime requires residency; reboot is required to release the driver.");
+    }
+}
+
+EXTERN_C
 VOID Unload(PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
 
     InterlockedExchange(&g_DbgkDriverUnloading, 1);
-    _RemoveDevice(DriverObject);
     WaitForDbgkIoctlDrain();
+    _RemoveDevice(DriverObject);
 
-    // 旧项目保留代码：卸载保护模块，内部原设计对应 UnCallbacks/进程保护回调清理。
-    // 注释原因：当前 DriverEntry 没有放开 InitProtect/SetProcessCallbacks，卸载时调用会面对未注册句柄或重复清理风险。
-    // 放开好处：若恢复 ObRegisterCallbacks 保护链路，可对称释放回调，避免驱动卸载残留。
-    // 放开坏处：在初始化未接通时放开会增加卸载断言和无效句柄路径。
-    // 项目影响：继续注释表示当前进程保护回调未启用；放开必须与 InitProtect/SetProcessCallbacks 同步。
-    // 当前建议：继续注释。
+    // 与 DriverEntry 的保护回调注册配对；注销完成后才释放驱动状态。
     UnloadProtect();
     RemoveHooks();
     DbgkUnInitialize();
+    hvgt::release_hook_page_pins();
     Cr3ResolverReset();
     DbgPrint("Driver Unload!!!\n");
 }
@@ -107,16 +117,18 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING Registry
     DbgPrint("血腥城堡驱动加载成功!!!\n");
 
     InitGlobalVariable(DriverObject);
-    // 旧项目保留代码：初始化保护模块，原意是注册进程/线程/对象保护回调。
-    // 注释原因：当前重构版本只初始化保护列表数据结构，没有完整接回 RegisterCallbacks/UnloadProtect 生命周期。
-    // 放开好处：可以恢复句柄访问削权、反读写等保护能力。
-    // 放开坏处：ObCallback altitude、签名绕过标志和卸载对称性都要重新验证，否则可能导致加载失败或卸载蓝屏。
-    // 项目影响：继续注释时“保护进程函数”不真正生效；放开会改变全局进程句柄访问行为。
-    InitProtect(DriverObject);
-    NTSTATUS ntStatus = CreateDevice(DriverObject);
+    // 注册失败直接返回；后续初始化失败必须撤销已经注册的回调。
+    NTSTATUS ntStatus = InitProtect(DriverObject);
+    if (!NT_SUCCESS(ntStatus))
+    {
+        return ntStatus;
+    }
+
+    ntStatus = CreateDevice(DriverObject);
     if (!NT_SUCCESS(ntStatus))
     {
         outLog("Win11创建设备对象失败.");
+        UnloadProtect(); // DriverEntry 失败不会调用 DriverUnload，必须在这里注销回调。
         //        }
         //    }
         //}
@@ -453,10 +465,18 @@ VOID ProtectLog(IN const char* format, ...)
 }
 
 //初始化保护：注册调试器进程句柄保护回调（削掉外部对调试器的 PROCESS_VM_READ/WRITE）
-VOID InitProtect(IN PDRIVER_OBJECT DriverObject)
+NTSTATUS InitProtect(IN PDRIVER_OBJECT DriverObject)
 {
-    SetProcessCallbacks(DriverObject);
-    outFile("进程保护已启用");
+    const NTSTATUS status = SetProcessCallbacks(DriverObject);
+    if (NT_SUCCESS(status))
+    {
+        outFile("进程保护已启用");
+    }
+    else
+    {
+        outLog("进程保护回调注册失败: 0x%X.", status);
+    }
+    return status;
 }
 
 //卸载保护
@@ -472,6 +492,8 @@ VOID RemoveHooks()
 
 VOID InitGlobalVariable(PDRIVER_OBJECT DriverObject)
 {
+    g_DbgkDriverObject = DriverObject;
+    hvgt::initialize_hook_page_pins();
     g_IsInitGlobalVariable = FALSE;
     g_DbgkOriginalCloseProcedure = NULL;
     InterlockedExchange(&g_DbgkDriverUnloading, 0);

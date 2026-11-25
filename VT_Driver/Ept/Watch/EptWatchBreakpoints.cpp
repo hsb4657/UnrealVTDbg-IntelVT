@@ -137,7 +137,7 @@ namespace ept
 
 		if (hooked_page_info->pfn_of_fake_page_contents == 0)
 		{
-			hooked_page_info->pfn_of_fake_page_contents = GET_PFN(MmGetPhysicalAddress(hooked_page_info->fake_page_contents).QuadPart);
+			hooked_page_info->pfn_of_fake_page_contents = GET_PFN(pool_manager::pool_physical_address(hooked_page_info));
 		}
 
 		hooked_page_info->original_entry = *hooked_page_info->entry_address;
@@ -405,7 +405,7 @@ namespace ept
 		initialize_hooked_page_runtime_fields(hooked_page_info);
 
 		hooked_page_info->pfn_of_hooked_page = GET_PFN(physical_address); //获取guest物理页面的页帧号
-		hooked_page_info->pfn_of_fake_page_contents = GET_PFN(MmGetPhysicalAddress(hooked_page_info->fake_page_contents).QuadPart);
+		hooked_page_info->pfn_of_fake_page_contents = GET_PFN(pool_manager::pool_physical_address(hooked_page_info));
 		hooked_page_info->entry_address = target_page; //ept_pte
 		hooked_page_info->owner_split = ept_get_split_from_pml1(target_page); // 获取运行期分割的 split
 		//将原页修改为不可执行

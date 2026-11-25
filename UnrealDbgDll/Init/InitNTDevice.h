@@ -3,6 +3,9 @@
 #ifndef _INIT_NTDEVICE_H
 #define _INIT_NTDEVICE_H
 
+#include <mutex>
+extern std::recursive_mutex g_driverDeviceMutex;
+
 extern HANDLE g_hGeneralDriverDevice;
 
 //初始化驱动设备

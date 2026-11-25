@@ -24,6 +24,7 @@ PWCHAR PassProcessList[12] = {
 
 namespace
 {
+    PDRIVER_OBJECT g_DbgkDriverObject = nullptr;
     const GUID kDbgkDeviceClassGuid =
     { 0x8d72cb34, 0xe7b0, 0x4d53, { 0x99, 0x4f, 0x43, 0x5b, 0x20, 0xd7, 0xb9, 0x1a } };
 
@@ -52,13 +53,26 @@ namespace
 }
 
 EXTERN_C
+VOID DisableDbgkHotUnload()
+{
+    // PspExitThread does not return; the state counter cannot prove that the
+    // caller has left the driver image/trampoline. Keep the image until reboot.
+    if (g_DbgkDriverObject != nullptr)
+    {
+        g_DbgkDriverObject->DriverUnload = nullptr;
+        KeMemoryBarrier();
+        outLog("Driver execution/callback lifetime requires residency; reboot is required to release the driver.");
+    }
+}
+
+EXTERN_C
 VOID Unload(PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
 
     InterlockedExchange(&g_DbgkDriverUnloading, 1);
-    _RemoveDevice(DriverObject);
     WaitForDbgkIoctlDrain();
+    _RemoveDevice(DriverObject);
 
     // 旧项目保留代码：卸载保护模块，内部原设计对应 UnCallbacks/进程保护回调清理。
     //放开必须与 InitProtect/SetProcessCallbacks 同步。
@@ -74,6 +88,7 @@ VOID Unload(PDRIVER_OBJECT DriverObject)
             reinterpret_cast<ULONG_PTR>(Hvm_DbgkDebugObjectType),
             reinterpret_cast<ULONG_PTR>(g_DbgkOriginalCloseProcedure));
     }
+    hvgt::release_hook_page_pins();
     Cr3ResolverReset();
     DbgPrint("Driver Unload!!!\n");
 }
@@ -414,12 +429,18 @@ VOID ProtectLog(IN const char* format, ...)
 }
 
 //初始化保护：注册调试器进程句柄保护回调（削掉外部对调试器的 PROCESS_VM_READ/WRITE）
-VOID InitProtect(IN PDRIVER_OBJECT DriverObject)
+NTSTATUS InitProtect(IN PDRIVER_OBJECT DriverObject)
 {
-    SetProcessCallbacks(DriverObject);
-    //削掉外部对调试器进程的 PROCESS_VM_READ/WRITE
-    outFile("进程保护已启用");
-
+    const NTSTATUS status = SetProcessCallbacks(DriverObject);
+    if (NT_SUCCESS(status))
+    {
+        outFile("进程保护已启用");
+    }
+    else
+    {
+        outLog("进程保护回调注册失败: 0x%X.", status);
+    }
+    return status;
 }
 
 //卸载保护
@@ -435,6 +456,8 @@ VOID RemoveHooks()
 
 VOID InitGlobalVariable(PDRIVER_OBJECT DriverObject)
 {
+    g_DbgkDriverObject = DriverObject;
+    hvgt::initialize_hook_page_pins();
     UNREFERENCED_PARAMETER(DriverObject);
 
     g_IsInitGlobalVariable = FALSE;

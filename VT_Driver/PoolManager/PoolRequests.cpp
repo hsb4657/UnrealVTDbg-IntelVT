@@ -98,31 +98,44 @@ namespace pool_manager
             return;
         }
 
-        PLIST_ENTRY current = 0;
-        current = g_vmm_context.pool_manager->list_of_allocated_pools;
-
-        KIRQL old_irql;
-        KeAcquireSpinLock(
-            &g_vmm_context.pool_manager->lock_for_reading_pool,
-            &old_irql);
-        while (g_vmm_context.pool_manager->list_of_allocated_pools != current->Flink)
+        auto* manager = g_vmm_context.pool_manager;
+        for (auto* node = load_pool_head(&manager->by_address[pool_hash(address)]);
+            node; node = node->next_address)
         {
-            current = current->Flink;
+            if (node->address != address) continue;
+            // No Windows lock, memory clearing, or event signaling in VMX root.
+            // The caller must unlink the object and invalidate EPT before retiring it.
+            InterlockedCompareExchange(&node->state, POOL_DIRTY, POOL_BUSY);
+            return;
+        }
+    }
 
-            // Get the head of the record
-            __pool_table* pool_table = (__pool_table*)CONTAINING_RECORD(current, __pool_table, pool_list);
+    unsigned __int64 pool_physical_address(const void* base)
+    {
+        auto* manager = g_vmm_context.pool_manager;
+        if (!manager) return 0;
+        for (auto* node = load_pool_head(&manager->by_address[pool_hash(base)]);
+            node; node = node->next_address)
+            if (node->address == base) return node->physical_address;
+        return 0;
+    }
 
-            if (address == pool_table->address)
+    void recycle_released_pools()
+    {
+        auto* manager = g_vmm_context.pool_manager;
+        if (!manager || is_current_context_vmx_root() || KeGetCurrentIrql() != PASSIVE_LEVEL)
+            return;
+        for (unsigned i = 1; i <= INTENTION_TRACK_HOOKED_FUNCTIONS; ++i)
+        {
+            for (auto* node = load_pool_head(&manager->by_intention[i]);
+                node; node = node->next_intention)
             {
-                RtlSecureZeroMemory(address, pool_table->size);
-                pool_table->is_busy = false;
-                pool_table->recycled = true;
-                break;
+                if (InterlockedCompareExchange(&node->state, POOL_CLEANING, POOL_DIRTY) != POOL_DIRTY)
+                    continue;
+                RtlSecureZeroMemory(node->address, node->size);
+                node->recycled = true;
+                InterlockedExchange(&node->state, POOL_FREE);
             }
         }
-
-        KeReleaseSpinLock(
-            &g_vmm_context.pool_manager->lock_for_reading_pool,
-            old_irql);
     }
 }

@@ -1,23 +1,25 @@
 ﻿#include "EptHookCommon.h"
 
 EXTERN_C
-VOID Hook_NtQueryInformationThread()
+BOOLEAN Hook_NtQueryInformationThread()
 {
     if (g_IsInitGlobalVariable)
     {
         // 使用 ProtectDrxX64.cpp 中的 TitanHide 对照实现：
         // ThreadHideFromDebugger 查询伪装 + ThreadWow64Context DRx 清零，其余原样转发。
-        HookEptRoutine(Sys_NtQueryInformationThread, NtQueryInformationThread, (PVOID*)&Original_NtQueryInformationThread, "NtQueryInformationThread", "NtQueryInformationThread");
+        return HookEptRoutine(Sys_NtQueryInformationThread, NtQueryInformationThread, (PVOID*)&Original_NtQueryInformationThread, "NtQueryInformationThread", "NtQueryInformationThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtSetInformationThread()
+BOOLEAN Hook_NtSetInformationThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtSetInformationThread, HvmNtSetInformationThread, (PVOID*)&Original_NtSetInformationThread, "NtSetInformationThread", "NtSetInformationThread");
+        return HookEptRoutine(Sys_NtSetInformationThread, HvmNtSetInformationThread, (PVOID*)&Original_NtSetInformationThread, "NtSetInformationThread", "NtSetInformationThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
@@ -75,30 +77,33 @@ VOID Hook_NtResumeThread()
 // 放开的坏处：符号偏移或系统版本不匹配时会影响调试事件分发，所以依赖 InitOffset/符号初始化正确。
 // 项目影响：这是当前 SetupEptHook 默认启用项，不能随意关闭，否则调试线程创建事件可能不完整。
 EXTERN_C
-VOID Hook_DbgkCreateThread()
+BOOLEAN Hook_DbgkCreateThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkCreateThread, DbgkCreateThread, NULL, "DbgkCreateThread", "DbgkCreateThread");
+        return HookEptRoutine(Sys_DbgkCreateThread, DbgkCreateThread, NULL, "DbgkCreateThread", "DbgkCreateThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkExitThread()
+BOOLEAN Hook_DbgkExitThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkExitThread, DbgkExitThread, NULL, "DbgkExitThread", "DbgkExitThread");
+        return HookEptRoutine(Sys_DbgkExitThread, DbgkExitThread, NULL, "DbgkExitThread", "DbgkExitThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkExitProcess()
+BOOLEAN Hook_DbgkExitProcess()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkExitProcess, DbgkExitProcess, NULL, "DbgkExitProcess", "DbgkExitProcess");
+        return HookEptRoutine(Sys_DbgkExitProcess, DbgkExitProcess, NULL, "DbgkExitProcess", "DbgkExitProcess");
     }
+    return FALSE;
 }
 
 EXTERN_C
@@ -120,13 +125,19 @@ VOID Hook_NtTerminateProcess()
 }
 
 EXTERN_C
-VOID Hook_PspExitThread()
+BOOLEAN Hook_PspExitThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_PspExitThread, PspExitThread, (PVOID*)&Original_PspExitThread, "PspExitThread", "PspExitThread");
-        SetupHook_PspExitThread_CMP_Debugport();
+        if (Sys_PspExitThread != nullptr)
+            DisableDbgkHotUnload(); // Pin before any CPU can execute the terminal hook.
+        if (!HookEptRoutine(Sys_PspExitThread, PspExitThread, (PVOID*)&Original_PspExitThread, "PspExitThread", "PspExitThread"))
+        {
+            return FALSE;
+        }
+        return SetupHook_PspExitThread_CMP_Debugport();
     }
+    return FALSE;
 }
 
 EXTERN_C
@@ -139,12 +150,13 @@ VOID Hook_PspCreateThread()
 }
 
 EXTERN_C
-VOID Hook_NtCreateThreadEx()
+BOOLEAN Hook_NtCreateThreadEx()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtCreateThreadEx, NtCreateThreadEx, (PVOID*)&Original_NtCreateThreadEx, "NtCreateThreadEx", "NtCreateThreadEx");
+        return HookEptRoutine(Sys_NtCreateThreadEx, NtCreateThreadEx, (PVOID*)&Original_NtCreateThreadEx, "NtCreateThreadEx", "NtCreateThreadEx");
     }
+    return FALSE;
 }
 
 EXTERN_C

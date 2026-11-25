@@ -151,41 +151,44 @@ VOID SetupHook_DbgkCreateThread_CMP_Debugport() // 在 DbgkCreateThread 内查�
     outLog("hook DbgkCreateThread_CMP_Debugport_01 target cmp not found.");
 }
 
-VOID SetupHook_PspExitThread_CMP_Debugport() // 在 PspExitThread 内查找 DebugPort 比较并安装 EPT hook。
+BOOLEAN SetupHook_PspExitThread_CMP_Debugport() // 在 PspExitThread 内查找 DebugPort 比较并安装 EPT hook。
 {
     BYTE code[] = { 0x49, 0x39,'?','?','?','?' }; // Win10 PspExitThread 目标 cmp 指令模板。
     BYTE* hookAddr = (BYTE*)SearchCode(code, sizeof(code), (BYTE*)Sys_PspExitThread, 0x200); // 在函数前 0x200 字节内查找候选指令。
     if (hookAddr == NULL)
     {
         outLog("hook PspExitThread_CMP_Debugport_01 target cmp not found.");
-        return;
+        return FALSE;
     }
 
     if (!MmIsAddressValid(hookAddr) || !MmIsAddressValid(hookAddr + sizeof(code) - 1))
     {
         outLog("hook PspExitThread_CMP_Debugport_01 target cmp address invalid.");
-        return;
+        return FALSE;
     }
 
     if ((hookAddr[0] == 0x49) &&
         (hookAddr[1] == 0x39) &&
         (*(WORD*)&hookAddr[3] == eprocess_offset::DebugPort))
     {
-        PspExitThread_jcc_instruction = (unsigned __int64)((unsigned __int64)hookAddr + (unsigned __int64)(LDE((unsigned __int8*)hookAddr, 64)));
-        if (PspExitThread_jcc_instruction == 0)
+        const ULONG_PTR instructionLength = LDE((unsigned __int8*)hookAddr, 64);
+        if (instructionLength == 0)
         {
-            outLog("hook PspExitThread_CMP_Debugport_01 jcc instruction is NULL after LDE.");
-            return;
+            outLog("hook PspExitThread_CMP_Debugport_01 invalid instruction length.");
+            return FALSE;
         }
+        PspExitThread_jcc_instruction = (unsigned __int64)hookAddr + instructionLength;
         if (hvgt::hook_function(hookAddr, Asm_PspExitThread_CMP_Debugport_01, NULL))
         {
             outLog("hook PspExitThread_CMP_Debugport_01成功.");
+            return TRUE;
         }
         else
         {
             outLog("hook PspExitThread_CMP_Debugport_01失败.");
         }
     }
+    return FALSE;
 }
 
 EXTERN_C

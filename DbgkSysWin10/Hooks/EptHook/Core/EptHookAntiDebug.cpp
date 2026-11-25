@@ -1399,81 +1399,86 @@ VOID PrepareVirtualDebugTargetProcess(_EPROCESS* Process)
 }
 
 EXTERN_C
-VOID Hook_NtQueryInformationProcess()
+BOOLEAN Hook_NtQueryInformationProcess()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtQueryInformationProcess,
             HvmNtQueryInformationProcess,
             (PVOID*)&Original_NtQueryInformationProcess,
             "NtQueryInformationProcess",
             "NtQueryInformationProcess");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtSetInformationProcess()
+BOOLEAN Hook_NtSetInformationProcess()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtSetInformationProcess,
             HvmNtSetInformationProcess,
             (PVOID*)&Original_NtSetInformationProcess,
             "NtSetInformationProcess",
             "NtSetInformationProcess");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtQueryObject()
+BOOLEAN Hook_NtQueryObject()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtQueryObject,
             HvmNtQueryObject,
             (PVOID*)&Original_NtQueryObject,
             "NtQueryObject",
             "NtQueryObject");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtQuerySystemInformation()
+BOOLEAN Hook_NtQuerySystemInformation()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtQuerySystemInformation,
             HvmNtQuerySystemInformation,
             (PVOID*)&Original_NtQuerySystemInformation,
             "NtQuerySystemInformation",
             "NtQuerySystemInformation");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtSystemDebugControl()
+BOOLEAN Hook_NtSystemDebugControl()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtSystemDebugControl,
             HvmNtSystemDebugControl,
             (PVOID*)&Original_NtSystemDebugControl,
             "NtSystemDebugControl",
             "NtSystemDebugControl");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtClose()
+BOOLEAN Hook_NtClose()
 {
     if (!g_IsInitGlobalVariable)
     {
-        return;
+        return FALSE;
     }
 
     if (InterlockedExchange(&g_AntiDebugNtCloseMutexReady, 1) == 0)
@@ -1481,7 +1486,7 @@ VOID Hook_NtClose()
         KeInitializeMutex(&g_AntiDebugNtCloseMutex, 0);
     }
 
-    HookEptRoutine(
+    return HookEptRoutine(
         Sys_NtClose,
         HvmNtClose,
         (PVOID*)&Original_NtClose,
@@ -1490,15 +1495,16 @@ VOID Hook_NtClose()
 }
 
 EXTERN_C
-VOID Hook_NtDuplicateObject()
+BOOLEAN Hook_NtDuplicateObject()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(
+        return HookEptRoutine(
             Sys_NtDuplicateObject,
             HvmNtDuplicateObject,
             (PVOID*)&Original_NtDuplicateObject,
             "NtDuplicateObject",
             "NtDuplicateObject");
     }
+    return FALSE;
 }

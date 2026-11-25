@@ -46,21 +46,23 @@ VOID Hook_MmProtectVirtualMemory()
 }
 
 EXTERN_C
-VOID Hook_NtGetContextThread()
+BOOLEAN Hook_NtGetContextThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtGetContextThread, NtGetContextThread, (PVOID*)&Original_NtGetContextThread, "NtGetContextThread", "NtGetContextThread");
+        return HookEptRoutine(Sys_NtGetContextThread, NtGetContextThread, (PVOID*)&Original_NtGetContextThread, "NtGetContextThread", "NtGetContextThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtSetContextThread()
+BOOLEAN Hook_NtSetContextThread()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtSetContextThread, NtSetContextThread, (PVOID*)&Original_NtSetContextThread, "NtSetContextThread", "NtSetContextThread");
+        return HookEptRoutine(Sys_NtSetContextThread, NtSetContextThread, (PVOID*)&Original_NtSetContextThread, "NtSetContextThread", "NtSetContextThread");
     }
+    return FALSE;
 }
 
 EXTERN_C
@@ -109,12 +111,13 @@ VOID Hook_ObReferenceObjectByHandleWithTag()
 }
 
 EXTERN_C
-VOID Hook_ObpReferenceObjectByHandleWithTag()
+BOOLEAN Hook_ObpReferenceObjectByHandleWithTag()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_ObpReferenceObjectByHandleWithTag, NewObpReferenceObjectByHandleWithTag, (PVOID*)&Original_ObpReferenceObjectByHandleWithTag, "ObpReferenceObjectByHandleWithTag", "ObpReferenceObjectByHandleWithTag");
+        return HookEptRoutine(Sys_ObpReferenceObjectByHandleWithTag, NewObpReferenceObjectByHandleWithTag, (PVOID*)&Original_ObpReferenceObjectByHandleWithTag, "ObpReferenceObjectByHandleWithTag", "ObpReferenceObjectByHandleWithTag");
     }
+    return FALSE;
 }
 
 EXTERN_C

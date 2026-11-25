@@ -305,113 +305,48 @@ namespace ept
 			&hooked_function_info->hooked_function_list);
 	}
 
-	static void reclaim_retired_functions(__ept_hooked_page_info* hooked_page_info)
+	static void reclaim_retired_functions(__ept_hooked_page_info* page)
 	{
-		if (hooked_page_info == nullptr)
-		{
-			return;
-		}
-
-		for (;;)
-		{
-			__ept_hooked_function_info* victim = nullptr;
-			for (PLIST_ENTRY current = hooked_page_info->retired_functions_list.Flink;
-				current != &hooked_page_info->retired_functions_list;
-				current = current->Flink)
-			{
-				__ept_hooked_function_info* candidate =
-					CONTAINING_RECORD(
-						current,
-						__ept_hooked_function_info,
-						hooked_function_list);
-
-				if (InterlockedCompareExchange(
-					&candidate->hot_reference_count, 0, 0) == 0)
-				{
-					RemoveEntryList(&candidate->hooked_function_list);
-					victim = candidate;
-					break;
-				}
-			}
-
-			if (victim == nullptr)
-			{
-				return;
-			}
-
-			unsigned __int8* const first_trampoline_address =
-				victim->first_trampoline_address;
-			pool_manager::release_pool(victim);
-			// trampoline 可能在另一个 vCPU 的 guest 上下文中正在执行。
-			// pool_manager::release_pool() 会 RtlSecureZeroMemory() 整块缓冲区，
-			// 运行时回收会把正在执行的指令清零，导致 guest 从全零代码执行并破坏内核池。
-			// 因此 trampoline 只在驱动卸载时由 pool_manager::uninitialize() 统一释放。
-			UNREFERENCED_PARAMETER(first_trampoline_address);
-		}
+        // Save next before retiring: the worker may immediately zero a retired record.
+        for (auto* current = page->retired_functions_list.Flink;
+            current != &page->retired_functions_list;)
+        {
+            auto* next = current->Flink;
+            auto* function = CONTAINING_RECORD(current, __ept_hooked_function_info, hooked_function_list);
+            if (InterlockedCompareExchange(&function->hot_reference_count, 0, 0) == 0)
+            {
+                RemoveEntryList(current);
+                // Guest execution of a trampoline is not covered by hot references.
+                // Keep trampoline allocations until VMX shutdown; retire metadata only.
+                pool_manager::release_pool(function);
+            }
+            current = next;
+        }
 	}
 
 	void reclaim_retired_resources(__ept_state& ept_state)
 	{
-		for (;;)
-		{
-			__ept_hooked_page_info* victim = nullptr;
-			__ept_dynamic_split* owner_split = nullptr;
+        for (auto* current = ept_state.hooked_page_list.Flink;
+            current != &ept_state.hooked_page_list; current = current->Flink)
+            reclaim_retired_functions(CONTAINING_RECORD(current, __ept_hooked_page_info, hooked_page_list));
 
-			// 活动页上的函数记录也可能已摘到待回收链，先按页清理它们。
-			for (PLIST_ENTRY current = ept_state.hooked_page_list.Flink;
-				current != &ept_state.hooked_page_list;
-				current = current->Flink)
-			{
-				__ept_hooked_page_info* hooked_page_info =
-					CONTAINING_RECORD(
-						current,
-						__ept_hooked_page_info,
-						hooked_page_list);
-				reclaim_retired_functions(hooked_page_info);
-			}
-
-			for (PLIST_ENTRY current = ept_state.retired_page_list.Flink;
-				current != &ept_state.retired_page_list;
-				current = current->Flink)
-			{
-				__ept_hooked_page_info* hooked_page_info =
-					CONTAINING_RECORD(
-						current,
-						__ept_hooked_page_info,
-						hooked_page_list);
-
-				reclaim_retired_functions(hooked_page_info);
-
-				if (InterlockedCompareExchange(
-					&hooked_page_info->hot_reference_count, 0, 0) != 0 ||
-					InterlockedCompareExchange(
-						&hooked_page_info->mtf_reference_count, 0, 0) != 0)
-				{
-					continue;
-				}
-
-				const bool functions_empty =
-					IsListEmpty(&hooked_page_info->hooked_functions_list) &&
-					IsListEmpty(&hooked_page_info->retired_functions_list);
-
-				if (!functions_empty)
-				{
-					continue;
-				}
-
-				RemoveEntryList(&hooked_page_info->hooked_page_list);
-				owner_split = hooked_page_info->owner_split;
-				victim = hooked_page_info;
-				break;
-			}
-
-			if (victim == nullptr)
-			{
-				return;
-			}
-
-			pool_manager::release_pool(victim);
-			ept_split_ref_dec_and_maybe_release(ept_state, owner_split);
-		}
+        // One traversal instead of rescanning both lists after every reclaimed page.
+        for (auto* current = ept_state.retired_page_list.Flink;
+            current != &ept_state.retired_page_list;)
+        {
+            auto* next = current->Flink;
+            auto* page = CONTAINING_RECORD(current, __ept_hooked_page_info, hooked_page_list);
+            reclaim_retired_functions(page);
+            if (InterlockedCompareExchange(&page->hot_reference_count, 0, 0) == 0 &&
+                InterlockedCompareExchange(&page->mtf_reference_count, 0, 0) == 0 &&
+                IsListEmpty(&page->hooked_functions_list) && IsListEmpty(&page->retired_functions_list))
+            {
+                auto* split = page->owner_split;
+                RemoveEntryList(current);
+                pool_manager::release_pool(page);
+                ept_split_ref_dec_and_maybe_release(ept_state, split);
+            }
+            current = next;
+        }
 	}
 }

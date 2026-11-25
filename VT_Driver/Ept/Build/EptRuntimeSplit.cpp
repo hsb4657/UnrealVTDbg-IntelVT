@@ -102,7 +102,7 @@ namespace ept
 		}
 
 		const unsigned __int64 split_pfn =
-			MmGetPhysicalAddress(&split->pml1[0]).QuadPart >> PAGE_SHIFT;
+			pool_manager::pool_physical_address(split) >> PAGE_SHIFT;
 		if (pde->page_directory_entry.large_page != 0 ||
 			pde->large_page.page_frame_number != split_pfn ||
 			!is_split_mergeable(split))

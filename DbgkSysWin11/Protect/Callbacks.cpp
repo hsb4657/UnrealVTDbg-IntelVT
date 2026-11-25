@@ -109,7 +109,7 @@ OB_PREOP_CALLBACK_STATUS preProcessCallback(PVOID RegistrationContext, POB_PRE_O
 }
 
 //设置进程回调
-VOID SetProcessCallbacks(IN PDRIVER_OBJECT pDriver_Object)
+NTSTATUS SetProcessCallbacks(IN PDRIVER_OBJECT pDriver_Object)
 {
 	NTSTATUS Status; // eax
 	OB_OPERATION_REGISTRATION oor;
@@ -131,19 +131,15 @@ VOID SetProcessCallbacks(IN PDRIVER_OBJECT pDriver_Object)
 	ocr.RegistrationContext = NULL;
 
 	Status = ObRegisterCallbacks(&ocr, &g_obProcessHandle);
-	// /* Check if we failed */
-	if (!NT_SUCCESS(Status))
-	{
-		ASSERT(FALSE);
-	}
+	return Status;
 }
 
 //卸载进程回调
 VOID UnProcessCallbacks()
 {
-	ASSERT(g_obProcessHandle);
 	if (g_obProcessHandle)
 	{
 		ObUnRegisterCallbacks(g_obProcessHandle);
+		g_obProcessHandle = NULL;
 	}
 }

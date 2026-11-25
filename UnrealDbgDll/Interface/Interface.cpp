@@ -72,9 +72,10 @@ bool InjectDll_0(DWORD dwPid, TCHAR* DLLPathName, BOOL is64Process)
 
 BOOL TL_BlockGameResumeThread(DWORD dwPid)
 {
-	if (dwPid && dwPid != GetCurrentProcessId())
+	if (dwPid == 0 || dwPid == GetCurrentProcessId())
 	{
-		TL_BlockGameResumeThread_internal(dwPid);
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return FALSE;
 	}
-	return TRUE;
+	return TL_BlockGameResumeThread_internal(dwPid);
 }

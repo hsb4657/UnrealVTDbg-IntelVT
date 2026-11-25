@@ -5,6 +5,7 @@
 #include "../../../Globals.h"
 #include "../../../EPT.h"
 #include "../../../poolmanager.h"
+#include "../../../Vmcs/VmcsApi.h"
 
 namespace ept
 {
@@ -15,9 +16,7 @@ namespace ept
 		void** origin_function,
 		unsigned __int64 target_cr3)
 	{
-		UNREFERENCED_PARAMETER(target_cr3);
-		//unsigned __int64 physical_address = hv::get_physical_address(target_cr3, (PVOID)target_function);
-		unsigned __int64 physical_address = MmGetPhysicalAddress(target_function).QuadPart;
+		unsigned __int64 physical_address = hv::get_physical_address(target_cr3, target_function);
 
 		//
 		// 检测该函数是否存在于物理内存中
@@ -84,7 +83,8 @@ namespace ept
 			hooked_function_info->fake_page_contents = existing_hooked_page_info->fake_page_contents;
 
 			//开始hook
-			if (write_vmcall_instruction_to_memory(hooked_function_info, target_function, proxy_function, origin_function) == false)
+			if (!initialize_hooked_function_code(hooked_function_info, physical_address) ||
+                write_vmcall_instruction_to_memory(hooked_function_info, target_function, proxy_function, origin_function) == false)
 			{
 				if (hooked_function_info->first_trampoline_address != nullptr)
 					pool_manager::release_pool(hooked_function_info->first_trampoline_address);
@@ -195,7 +195,7 @@ namespace ept
 		}
 
 		hooked_page_info->pfn_of_hooked_page = GET_PFN(physical_address); //获取guest物理页面的页帧号
-		hooked_page_info->pfn_of_fake_page_contents = GET_PFN(MmGetPhysicalAddress(hooked_page_info->fake_page_contents).QuadPart);
+		hooked_page_info->pfn_of_fake_page_contents = GET_PFN(pool_manager::pool_physical_address(hooked_page_info));
 		hooked_page_info->entry_address = target_page; //ept_pte
 		hooked_page_info->owner_split = ept_get_split_from_pml1(target_page);
 
@@ -216,7 +216,7 @@ namespace ept
 		//将伪造页换上去
 		hooked_page_info->changed_entry.page_frame_number = hooked_page_info->pfn_of_fake_page_contents;
 
-		ept::initialize_fake_page_from_target(hooked_page_info, target_function);
+		const bool fake_page_ready = ept::initialize_fake_page_from_physical(hooked_page_info, physical_address);
 
 		initialize_hooked_function_runtime_fields(hooked_function_info);
 		hooked_function_info->virtual_address = target_function;
@@ -225,7 +225,8 @@ namespace ept
 		hooked_function_info->fake_page_contents = hooked_page_info->fake_page_contents;
 
 		//开始hook
-		if (write_vmcall_instruction_to_memory(hooked_function_info, target_function, proxy_function, origin_function) == false)
+		if (!fake_page_ready || !initialize_hooked_function_code(hooked_function_info, physical_address) ||
+                write_vmcall_instruction_to_memory(hooked_function_info, target_function, proxy_function, origin_function) == false)
 		{
 			target_page->read = 1;
 			target_page->write = 1;

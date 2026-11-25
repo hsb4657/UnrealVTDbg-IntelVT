@@ -16,7 +16,8 @@ namespace ept
 
 	// 用目标函数所在的完整 4KB 原页初始化伪页。复制源必须是页首，不能再从
 	// target_function 的页内偏移开始复制，否则伪页会整体错位。
-	bool initialize_fake_page_from_target(__ept_hooked_page_info* hooked_page_info, const void* target_function);
+	bool initialize_fake_page_from_physical(__ept_hooked_page_info* page, unsigned __int64 physical_address);
+    bool initialize_hooked_function_code(__ept_hooked_function_info* function, unsigned __int64 physical_address);
 
 	/// <summary>
 	/// Write an absolute jump, We aren't touching any register except stack so it's the most safest trampoline

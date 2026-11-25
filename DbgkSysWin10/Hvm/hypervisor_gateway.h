@@ -5,6 +5,8 @@
 
 namespace hvgt
 {
+    void initialize_hook_page_pins();
+    void release_hook_page_pins();
 	/// <summary>
 	/// Turn off virtual machine
 	/// </summary>

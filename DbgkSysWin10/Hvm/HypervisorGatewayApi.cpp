@@ -8,9 +8,14 @@
 #include "../List/MyList.h"
 #include "../Globals.h"
 #include "HypervisorGatewayInternal.h"
+#include "../../Common/Ring0/Hvm/HookPagePins.h"
 
 namespace hvgt
 {
+    static hv::HookPagePins g_hookPagePins;
+    void initialize_hook_page_pins() { g_hookPagePins.Initialize(); }
+    void release_hook_page_pins() { g_hookPagePins.ReleaseAll(); }
+
 	namespace
 	{
 		// 单核 VMCALL 查询“VT 是否全核就绪”：返回 true 当且仅当所有逻辑处理器都已 VMLAUNCH。
@@ -237,6 +242,8 @@ namespace hvgt
 	/// </summary>
 	bool hook_function(void* target_address, void* proxy_function, void** origin_function)
 	{
+        // Retain even on broadcast failure: another CPU may already have installed it.
+        if (!g_hookPagePins.Acquire(target_address)) return false;
 		if (!is_vmm_fully_ready())
 		{
 			return false;

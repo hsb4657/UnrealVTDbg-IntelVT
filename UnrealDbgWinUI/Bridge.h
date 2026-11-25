@@ -159,6 +159,8 @@ namespace unrealdbg_native
         void ClearTarget();
 
     private:
+        using ShutdownFn = BOOL(*)();
+        using SessionActiveFn = BOOL(*)();
         using InitializeFn = BOOL(*)(ULONG64);
         using StartProcessFn = BOOL(*)(wchar_t*, wchar_t*);
         using GetFileVersionFn = void(*)(wchar_t*, wchar_t*);
@@ -197,6 +199,8 @@ namespace unrealdbg_native
         std::thread initializeWorker_;
         HMODULE backendModule_{};
         InitializeFn initialize_{};
+        ShutdownFn shutdown_{};
+        SessionActiveFn sessionActive_{};
         StartProcessFn startProcess_{};
         GetFileVersionFn getFileVersion_{};
         BlockResumeThreadFn blockResumeThread_{};

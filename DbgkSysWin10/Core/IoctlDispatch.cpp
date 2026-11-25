@@ -48,13 +48,14 @@ NTSTATUS HandlerDispatchRoutin(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 
 Complete:
     FreeKernelUserDataPayload(&context.SafeUserData);
+
+    pIrp->IoStatus.Status = ntStatus;
+    pIrp->IoStatus.Information = NT_SUCCESS(ntStatus) ? context.Information : 0;
+    IoCompleteRequest(pIrp, IO_NO_INCREMENT);
     if (ioctlEntered)
     {
         InterlockedDecrement(&g_DbgkActiveIoctlCount);
     }
 
-    pIrp->IoStatus.Status = ntStatus;
-    pIrp->IoStatus.Information = NT_SUCCESS(ntStatus) ? context.Information : 0;
-    IoCompleteRequest(pIrp, IO_NO_INCREMENT);
     return ntStatus;
 }

@@ -5,7 +5,7 @@
 ## 设计边界
 
 - 纯 WinUI 3 / C++/WinRT，不使用 WebView。
-- `RunTime.cpp` 只通过 `UnrealDbgDll.dll` 现有的四个稳定导出访问后端。
+- `Runtime.cpp` 通过 `UnrealDbgDll.dll` 的七个导出访问后端，包括 `ConfigureHooks_F3`、`Shutdown_F3` 和 `SessionActive_F3`。
 - 新进程继续导出 `PrintLog`，兼容后端现有的日志回调契约。
 - `DebuggerList.ini` 与 `Config.ini` 保持旧版节名、键名和 `名称&路径` 格式。
 - 设计令牌集中在 `UiTheme.h`，页面不直接散落颜色和尺寸。
@@ -28,7 +28,9 @@
 暗黑主题采用墨青、竹青、朱砂和宣纸白；明亮主题采用宣纸白、深墨、竹青和低饱和朱砂。中文正文使用 Microsoft YaHei UI，数值和路径使用 Cascadia Mono / Consolas 回退链。
 
 日志中心对内核与 Hook 日志使用 UTF-8、CP936/GBK、GB18030 和系统代码页联合判定，避免在 UTF-8 活动代码页进程中把 GBK 中文误读为乱码。
-WinUI 引导、启动异常、冒烟测试与压力测试诊断统一追加到 `程序目录\Log\WinUI.log`，不再写入系统临时目录。
+WinUI 引导、启动异常、冒烟测试与压力测试诊断统一追加到 `程序目录\Log\WinUI.log`，不再写入系统临时目录。日志使用有界队列后台批量写入，运行中超过约 8 MiB 会轮转，正常退出等待最后一批落盘。
+
+退出会停止心跳和启动线程，再尝试按依赖顺序停止驱动。启用 `PspExitThread` 的会话不支持安全热卸载（默认全选包含此项），会保留驱动并提示重启。新 UI 需要配套的七接口 DLL。
 
 ## Loader 融合
 

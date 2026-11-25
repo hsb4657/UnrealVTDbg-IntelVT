@@ -140,7 +140,7 @@ namespace ept
 		new_entry.large_page.execute = 1;
 		new_entry.large_page.execute_for_usermode = pde->large_page.execute_for_usermode;
 
-		new_entry.large_page.page_frame_number = MmGetPhysicalAddress(&new_split->pml1[0]).QuadPart >> PAGE_SHIFT;
+		new_entry.large_page.page_frame_number = pool_manager::pool_physical_address(new_split) >> PAGE_SHIFT;
 
 		// 先发布到本 EPT 的拆分链表，再改写 PDE：一旦 PDE 变成“指向 4KB PML1 表”，
 		// get_pml1_entry 就能靠 PDE 指针在 split_list 里反查到 PML1 VA，不留下

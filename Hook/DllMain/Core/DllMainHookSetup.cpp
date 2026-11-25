@@ -6,6 +6,8 @@ namespace
     constexpr LONG kHookStateNotInstalled = 0;
     constexpr LONG kHookStateInstalled = 1;
     constexpr LONG kHookStateUninstalling = 2;
+    constexpr LONG kHookStateInstalling = 3;
+    constexpr LONG kHookStateCleanupRequired = 4;
 
     typedef bool (*HookInstallRoutine)();
     typedef bool (*HookUninstallRoutine)();
@@ -52,20 +54,18 @@ namespace
 
     bool InstallAllHooks()
     {
-        bool allInstalled = true;
         for (HookStep& step : g_HookSteps)
         {
             if (!step.install())
             {
                 logger.Log("安装%s钩子失败", step.name);
-                allInstalled = false;
-                continue;
+                return false;
             }
 
             step.installed = true;
         }
 
-        return allInstalled;
+        return true;
     }
 
     bool TryUninstallHook(const char* name, HookUninstallRoutine uninstall)
@@ -84,33 +84,23 @@ namespace
     {
         bool success = true;
 
-        // Keep the legacy teardown order. The original project also attempted to
-        // unhook the disabled DbgUiDebugActiveProcess and NtCreateUserProcess paths.
-        success = TryUninstallHook("DebugActiveProcess", TryUnHook_DebugActiveProcess) && success;
-        success = TryUninstallHook("DebugActiveProcessStop", TryUnHook_DebugActiveProcessStop) && success;
-        success = TryUninstallHook("TerminateProcess", TryUnHook_TerminateProcess) && success;
-        success = TryUninstallHook("NtDebugActiveProcess", TryUnHook_NtDebugActiveProcess) && success;
-        success = TryUninstallHook("NtRemoveProcessDebug", TryUnHook_NtRemoveProcessDebug) && success;
-        success = TryUninstallHook("NtTerminateProcess", TryUnHook_NtTerminateProcess) && success;
-        success = TryUninstallHook("DbgUiIssueRemoteBreakin", TryUnHook_DbgUiIssueRemoteBreakin) && success;
-        success = TryUninstallHook("DbgUiDebugActiveProcess", TryUnHook_DbgUiDebugActiveProcess) && success;
-        success = TryUninstallHook("NtCreateUserProcess", TryUnHook_NtCreateUserProcess) && success;
-        success = TryUninstallHook("WaitForDebugEvent", TryUnHook_WaitForDebugEvent) && success;
-        success = TryUninstallHook("ContinueDebugEvent", TryUnHook_ContinueDebugEvent) && success;
-        success = TryUninstallHook("NtDebugContinue", TryUnHook_NtDebugContinue) && success;
-        success = TryUninstallHook("OutputDebugStringA", TryUnHook_OutputDebugStringA) && success;
-        success = TryUninstallHook("OutputDebugStringW", TryUnHook_OutputDebugStringW) && success;
-        success = TryUninstallHook("SetThreadContext", TryUnHook_SetThreadContext) && success;
-        success = TryUninstallHook("GetThreadContext", TryUnHook_GetThreadContext) && success;
-        success = TryUninstallHook("WriteProcessMemory", TryUnHook_WriteProcessMemory) && success;
-        success = TryUninstallHook("ReadProcessMemory", TryUnHook_ReadProcessMemory) && success;
-        success = TryUninstallHook("NtWriteVirtualMemory", TryUnHook_NtWriteVirtualMemory) && success;
-        success = TryUninstallHook("NtReadVirtualMemory", TryUnHook_NtReadVirtualMemory) && success;
-        success = TryUninstallHook("VirtualProtectEx", TryUnHook_VirtualProtectEx) && success;
-
-        for (HookStep& step : g_HookSteps)
+        // Undo only committed steps, in reverse order. Failed detachments retain
+        // their records so the runtime keeps this module and can retry cleanup.
+        for (size_t index = _countof(g_HookSteps); index != 0; --index)
         {
-            step.installed = false;
+            HookStep& step = g_HookSteps[index - 1];
+            if (!step.installed)
+            {
+                continue;
+            }
+            if (TryUninstallHook(step.name, step.uninstall))
+            {
+                step.installed = false;
+            }
+            else
+            {
+                success = false;
+            }
         }
 
         return success;
@@ -125,41 +115,55 @@ bool SetupHook()
         return false;
     }
 
-    if (InterlockedCompareExchange(&HookDllMainInternal::g_HookInstalled, kHookStateInstalled, kHookStateNotInstalled) != kHookStateNotInstalled)
+    const LONG previousState = InterlockedCompareExchange(
+        &HookDllMainInternal::g_HookInstalled,
+        kHookStateInstalling,
+        kHookStateNotInstalled);
+    if (previousState != kHookStateNotInstalled)
     {
-        logger.Log("钩子已经安装，跳过重复初始化");
-        return true;
+        return previousState == kHookStateInstalled;
     }
 
-    if (InitializeDevice())
-    {
-        if (!InstallAllHooks())
-        {
-            logger.Log("部分钩子安装失败，继续保留已安装项");
-        }
-
-        logger.Log("初始化成功，钩子安装完毕");
-        return true;
-    }
-    // *rch = (*rch << 4) + (*(szHex + i) - 'A' + 10);
-    else
+    if (!InitializeDevice())
     {
         InterlockedExchange(&HookDllMainInternal::g_HookInstalled, kHookStateNotInstalled);
         logger.Log("初始化设备失败");
         return false;
     }
+
+    if (!InstallAllHooks())
+    {
+        InterlockedExchange(&HookDllMainInternal::g_HookInstalled, kHookStateCleanupRequired);
+        logger.Log("钩子安装失败，初始化未完成，需要回滚已安装项");
+        return false;
+    }
+
+    InterlockedExchange(&HookDllMainInternal::g_HookInstalled, kHookStateInstalled);
+    logger.Log("初始化成功，钩子安装完毕");
+    return true;
 }
 
 bool UnHook()
 {
-    if (InterlockedCompareExchange(&HookDllMainInternal::g_HookInstalled, kHookStateUninstalling, kHookStateInstalled) != kHookStateInstalled)
+    const LONG state = InterlockedCompareExchange(&HookDllMainInternal::g_HookInstalled, 0, 0);
+    if (state == kHookStateNotInstalled)
     {
         return true;
+    }
+    // Setup and teardown are owned by HookRuntimeThread. Installing is also
+    // accepted here to clean up the runtime's structured-exception path.
+    if (state == kHookStateUninstalling ||
+        InterlockedCompareExchange(&HookDllMainInternal::g_HookInstalled,
+            kHookStateUninstalling, state) != state)
+    {
+        return false;
     }
 
     if (!UninstallInstalledHooks())
     {
-        logger.Log("部分钩子卸载失败，继续清理资源");
+        InterlockedExchange(&HookDllMainInternal::g_HookInstalled, kHookStateCleanupRequired);
+        logger.Log("部分钩子卸载失败，保留 DLL 和驱动连接，等待再次清理");
+        return false;
     }
 
     if (g_hGeneralDriverDevice != INVALID_HANDLE_VALUE)

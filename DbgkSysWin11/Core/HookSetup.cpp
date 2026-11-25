@@ -290,35 +290,37 @@ VOID SetupHook_DbgkCreateThread_CMP_Debugport() // Win11 DbgkCreateThread DebugP
 //    else
 //        outLog("没有匹配到 cmp [r14+578h]");
 //}
-VOID SetupHook_PspExitThread_CMP_Debugport() // Win11 PspExitThread DebugPort cmp hook 安装。
+BOOLEAN SetupHook_PspExitThread_CMP_Debugport() // Win11 PspExitThread DebugPort cmp hook 安装。
 {
     BYTE code[] = { 0x49, 0x39,'?','?','?','?' };  // cmp 指令模板。
     BYTE* hookAddr = (BYTE*)SearchCode(code, sizeof(code), (BYTE*)Sys_PspExitThread, 0x200); // 在函数前 0x200 字节内查找目标 cmp。
     if (hookAddr == NULL)
     {
         outLog("hook PspExitThread_CMP_Debugport_01 target cmp not found.");
-        return;
+        return FALSE;
     }
 
     if (!MmIsAddressValid(hookAddr) || !MmIsAddressValid(hookAddr + sizeof(code) - 1))
     {
         outLog("hook PspExitThread_CMP_Debugport_01 target cmp address invalid.");
-        return;
+        return FALSE;
     }
 
     if ((hookAddr[0] == 0x49) &&
         (hookAddr[1] == 0x39) &&
         (*(WORD*)&hookAddr[3] == eprocess_offset::DebugPort))
     {
-        PspExitThread_jcc_instruction = (unsigned __int64)((unsigned __int64)hookAddr + (unsigned __int64)(LDE((unsigned __int8*)hookAddr, 64)));
-        if (PspExitThread_jcc_instruction == 0)
+        const ULONG_PTR instructionLength = LDE((unsigned __int8*)hookAddr, 64);
+        if (instructionLength == 0)
         {
-            outLog("hook PspExitThread_CMP_Debugport_01 jcc instruction is NULL after LDE.");
-            return;
+            outLog("hook PspExitThread_CMP_Debugport_01 invalid instruction length.");
+            return FALSE;
         }
+        PspExitThread_jcc_instruction = (unsigned __int64)hookAddr + instructionLength;
         if (hvgt::hook_function(hookAddr, Asm_PspExitThread_CMP_Debugport_01, NULL))
         {
             outLog("hook PspExitThread_CMP_Debugport_01成功.");
+            return TRUE;
         }
         else
         {
@@ -329,4 +331,5 @@ VOID SetupHook_PspExitThread_CMP_Debugport() // Win11 PspExitThread DebugPort cm
     {
         outLog("没有匹配到 cmp [r14+578h]");
     }
+    return FALSE;
 }

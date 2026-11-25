@@ -7,9 +7,14 @@
 
 #include <cstdint>
 #include <new>
+#include <mutex>
+#include <vector>
 
 namespace
 {
+    std::mutex g_startupMutex;
+    std::vector<HANDLE> g_startupThreads;
+    bool g_acceptStartups = false;
 	constexpr wchar_t kInjectDll32[] = L"Hook.dll";
 	constexpr wchar_t kInjectDll64[] = L"Hook64.dll";
 
@@ -379,6 +384,24 @@ namespace
 	}
 }
 
+void EnableStartupWorkers()
+{
+    std::lock_guard<std::mutex> lock(g_startupMutex);
+    g_acceptStartups = true;
+}
+
+void StopStartupWorkers()
+{
+    std::lock_guard<std::mutex> lock(g_startupMutex);
+    g_acceptStartups = false;
+    for (HANDLE thread : g_startupThreads)
+    {
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+    }
+    g_startupThreads.clear();
+}
+
 //下发调试器信息给驱动
 BOOL SendDebuggerDataToDriver(DWORD dwProcessId)
 {
@@ -421,6 +444,17 @@ DWORD GetProcessId_ByCursor()
 
 BOOL StartProcess(TCHAR* szExe, TCHAR* sPath)
 {
+    std::lock_guard<std::mutex> lock(g_startupMutex);
+    if (!g_acceptStartups) { SetLastError(ERROR_NOT_READY); return FALSE; }
+    for (auto it = g_startupThreads.begin(); it != g_startupThreads.end();)
+    {
+        if (WaitForSingleObject(*it, 0) == WAIT_OBJECT_0)
+        { CloseHandle(*it); it = g_startupThreads.erase(it); }
+        else ++it;
+    }
+    try { g_startupThreads.reserve(g_startupThreads.size() + 1); }
+    catch (...) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return FALSE; }
+
 	if (szExe == nullptr || szExe[0] == L'\0' || sPath == nullptr)
 	{
 		SetLastError(ERROR_INVALID_PARAMETER);
@@ -460,6 +494,6 @@ BOOL StartProcess(TCHAR* szExe, TCHAR* sPath)
 		return FALSE;
 	}
 
-	CloseHandle(reinterpret_cast<HANDLE>(threadHandle));
+	g_startupThreads.push_back(reinterpret_cast<HANDLE>(threadHandle));
 	return TRUE;
 }

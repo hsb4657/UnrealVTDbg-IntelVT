@@ -15,7 +15,9 @@ EXTERN_C VOID PspExitThread(_In_ NTSTATUS ExitStatus)
         s.DebugPort = 0;
         if (Original_PspExitThread != NULL)
         {
-            Original_PspExitThread(ExitStatus);
+            const auto original = Original_PspExitThread;
+            stateGuard.Release();
+            original(ExitStatus);
         }
         return;
     }
@@ -41,7 +43,9 @@ EXTERN_C VOID PspExitThread(_In_ NTSTATUS ExitStatus)
         s.DebugPort = 0;
     }
 
-    Original_PspExitThread(ExitStatus);
+    const auto original = Original_PspExitThread;
+    stateGuard.Release();
+    original(ExitStatus);
 }
 #pragma optimize("", on)
 

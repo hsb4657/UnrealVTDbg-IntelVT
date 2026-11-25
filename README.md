@@ -224,7 +224,7 @@ UnrealDbgWinUI.exe
   -> 读取 Config.ini
   -> 读取 DebuggerList.ini
   -> 加载 UnrealDbgDll.dll
-  -> 解析 5 个后端导出
+  -> 解析 7 个后端导出
   -> 读取 [HookSelection] Mask
   -> 后台准备系统 PDB
   -> 展示主界面
@@ -313,13 +313,16 @@ Guest 访问 Hook 页
 | 3 | `GetFileVersion` | 读取文件版本 |
 | 4 | `TL_BlockGameResumeThread` | 下发阻塞线程恢复请求 |
 | 5 | `ConfigureHooks_F3` | 保存 DbgkSys Hook 选择掩码 |
+| 6 | `Shutdown_F3` | 停止后台线程，按依赖顺序清理；不可安全卸载时保留驱动并返回失败 |
+| 7 | `SessionActive_F3` | 查询验证心跳对应的会话是否仍就绪 |
 
 关键行为：
 
 - `ConfigureHooks_F3` 拒绝 `HOOK_SELECTION_ALL` 之外的未知位。
 - Hook 掩码保存在用户态原子变量中。
 - `LoadSymbolsTable` 在加载符号和启动后端前发送 Hook 配置。
-- `Initialize_F3` 失败时调用后端清理路径。
+- `Initialize_F3` 失败时尝试后端清理；调试驱动未停止时不会继续卸载 VT。
+- `PspExitThread` Hook 安装前会禁用驱动热卸载；默认全选包含此项，需要重启完成回收。详见 [稳定性优化与蓝屏风险复查](docs/27-稳定性优化与蓝屏风险复查.md)。
 - `AIHelper.dll` 提供 `LoadNT`、`UnloadNT` 和 `outDebug`，不是当前解决方案的构建产物。
 
 ### DbgkSysWin10 / DbgkSysWin11
@@ -711,7 +714,7 @@ $msbuild = "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
   /p:Platform=x64
 ```
 
-WinUI 工程不包含其它工程的 `ProjectReference`。单独构建 UI 时只生成前端，后端驱动、DLL 和 Hook 需要单独构建或通过全解决方案构建。
+WinUI 工程不包含其它工程的 `ProjectReference`。直接构建上述 `.vcxproj` 时只生成前端。解决方案中的 `ProjectDependencies` 则要求五个后端工程先完成，再构建 WinUI 并打包，保证 `/m` 并行构建时不会提前复制后端文件。
 
 ### 构建产物
 
@@ -724,12 +727,20 @@ WinUI 工程不包含其它工程的 `ProjectReference`。单独构建 UI 时只
 | `DbgkSysWin10.sys` | `x64\Release\DbgkSysWin10.sys` |
 | `DbgkSysWin11.sys` | `x64\Release\DbgkSysWin11.sys` |
 
-WinUI 的 `StageRuntime` 会把已经存在的运行文件复制到：
+WinUI 的 `StageRuntime` 把运行文件复制到以下两个目录。全解决方案 x64 构建要求五个后端产物齐全，缺少文件会报错；优先采用解决方案输出，不允许项目目录下的旧副本覆盖它们。直接构建 UI 时可复用已有后端文件，但这不代表重新构建了后端。
 
 ```text
 x64\WinUI\Release\
 x64\WinUI\Release\bin\
 ```
+
+### 失败路径回归
+
+```text
+python3 -m unittest discover -s tests -v
+```
+
+测试使用 C++17 编译器对实际函数体进行故障注入，覆盖保护回调清理、Hook 安装与撤销失败、初始化状态传递和 TL 请求结果；打包测试使用 MSBuild 执行实际 `StageRuntime` 目标。缺少编译器或 MSBuild 时，对应测试会标记为跳过。这些测试不替代 Windows/WDK 全量编译和实机驱动验证；详细验证步骤见 [失败路径修复](docs/26-初始化失败清理与构建打包修复.md) 和 [稳定性优化与蓝屏风险复查](docs/27-稳定性优化与蓝屏风险复查.md)。新增测试覆盖退出依赖、异步日志、池并发复用、解码边界、代码快照和锁页生命周期。
 
 ## 部署与运行
 
@@ -843,7 +854,7 @@ Debugger0=x64dbg&F:\Tools\x64dbg\x64dbg.exe
 
 ## 验证结果
 
-本次 README 对应的源码结构在 2026-10-17 完成以下检查：
+以下是 2026-10-17 的历史验证结果，不覆盖本次新增源码。2026-11-25 的主机侧回归和仍需执行的 Windows 验证见 [稳定性复查记录](docs/27-稳定性优化与蓝屏风险复查.md)：
 
 | 项目 | 结果 | 说明 |
 |---|---|---|
@@ -895,7 +906,7 @@ Debugger0=x64dbg&F:\Tools\x64dbg\x64dbg.exe
 
 - 检查根目录和 `bin/` 中是否存在 `UnrealDbgDll.dll`。
 - 检查 DLL 架构是否为 x64。
-- 使用 `dumpbin /exports` 检查 5 个导出。
+- 使用 `dumpbin /exports` 检查 7 个导出。
 - 检查依赖 DLL 是否缺失。
 
 ### 驱动加载失败

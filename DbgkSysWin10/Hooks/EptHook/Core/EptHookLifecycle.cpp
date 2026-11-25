@@ -57,50 +57,9 @@ VOID UnEptHook()
     {
         outFile("EPT 取消 hook 成功.");
 
-        Original_PspExitThread = NULL;
-        Original_DbgkCreateThread = NULL;
-        Original_PspCallThreadNotifyRoutines = NULL;
-        Original_ObReferenceObjectByHandleWithTag = NULL;
-        Original_ObfDereferenceObjectWithTag = NULL;
-        Original_ObReferenceObjectByHandle = NULL;
-        Original_ObfDereferenceObject = NULL;
-        Original_ValidateHwnd = NULL;
-        Original_NtUserFindWindowEx = NULL;
-        Original_NtUserWindowFromPoint = NULL;
-        Original_NtUserSetWindowsHookEx = NULL;
-        Original_NtUserBuildHwndList = NULL;
-        Original_NtUserGetClassName = NULL;
-        Original_NtTerminateProcess = NULL;
-        Original_NtSuspendThread = NULL;
-        Original_NtResumeThread = NULL;
-        Original_NtQueryInformationThread = NULL;
-        Original_NtReadVirtualMemory = NULL;
-        Original_NtWriteVirtualMemory = NULL;
-        Original_NtGetContextThread = NULL;
-        Original_NtSetContextThread = NULL;
-        Original_PspCreateThread = NULL;
-        Original_NtCreateThreadEx = NULL;
-        Original_PspAllocateThread = NULL;
-        Original_KeStackAttachProcess = NULL;
-        Original_KiStackAttachProcess = NULL;
-        Original_NtOpenProcess = NULL;
-        Original_NtProtectVirtualMemory = NULL;
-        Original_MmProtectVirtualMemory = NULL;
-        Original_MmCopyVirtualMemory = NULL;
-        Original_PspCreateUserContext = NULL;
-        Original_ObpReferenceObjectByHandleWithTag = NULL;
-        Original_MiObtainReferencedVadEx = NULL;
-        Original_KiDispatchException = NULL;
-        Original_DbgkOpenProcessDebugPort = NULL;
-        Original_NtQueryInformationProcess = NULL;
-        Original_NtSetInformationProcess = NULL;
-        Original_NtQueryObject = NULL;
-        Original_NtQuerySystemInformation = NULL;
-        Original_NtSystemDebugControl = NULL;
-        Original_NtClose = NULL;
-        Original_NtDuplicateObject = NULL;
-        Original_NtSetInformationThread = NULL;
-
+        // Removing EPT redirects does not finish callbacks already in this driver.
+        // Keep original trampolines valid while DbgkUnInitialize drains those calls.
+        // A subsequent initialization replaces them only after that drain completes.
         g_IsInitGlobalVariable = FALSE;
         return;
     }
@@ -126,93 +85,71 @@ VOID Hook_Test()
 }
 
 EXTERN_C
-VOID SetupEptHook()
+BOOLEAN SetupEptHook()
 {
-    if (g_IsInitGlobalVariable)
+    if (!g_IsInitGlobalVariable)
     {
-        outFile("开始安装 EPT hook：mask=0x%llX.", g_EptHookSelectionMask);
-
-        //ntos
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_CREATE_DEBUG_OBJECT)
-            Hook_NtCreateDebugObject(); //此函数是创建调试对象 必须第一个先hook
-        if (g_EptHookSelectionMask & HOOK_SELECTION_PSP_INSERT_PROCESS)
-            Hook_PspInsertProcess();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_SET_INFORMATION_DEBUG_OBJECT)
-            Hook_NtSetInformationDebugObject();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_REMOVE_PROCESS_DEBUG)
-            Hook_NtRemoveProcessDebug();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_DEBUG_ACTIVE_PROCESS)
-            Hook_NtDebugActiveProcess();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_WAIT_FOR_DEBUG_EVENT)
-            Hook_NtWaitForDebugEvent();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_DEBUG_CONTINUE)
-            Hook_NtDebugContinue();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_MAP_VIEW_OF_SECTION)
-            Hook_DbgkMapViewOfSection();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_UNMAP_VIEW_OF_SECTION)
-            Hook_DbgkUnMapViewOfSection();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_CREATE_THREAD)
-            Hook_DbgkCreateThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_EXIT_THREAD)
-            Hook_DbgkExitThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_EXIT_PROCESS)
-            Hook_DbgkExitProcess();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_FORWARD_EXCEPTION)
-            Hook_DbgkForwardException();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGKP_QUEUE_MESSAGE)
-            Hook_DbgkpQueueMessage();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_PSP_CALL_THREAD_NOTIFY_ROUTINES)
-            Hook_PspCallThreadNotifyRoutines(); // 已延后到首次附加进程（NtCreateDebugObject）时安装，EAAC(APEX  冲突)
-        // 减少驱动加载阶段的 hook 面；线程创建事件只在有调试目标后才有意义。
-        if (g_EptHookSelectionMask & HOOK_SELECTION_PSP_EXIT_THREAD)
-            Hook_PspExitThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_OBP_REFERENCE_OBJECT_BY_HANDLE_TAG)
-            Hook_ObpReferenceObjectByHandleWithTag();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_CLOSE)
-            Hook_NtClose();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_DUPLICATE_OBJECT)
-            Hook_NtDuplicateObject();
-
-        // 反-反调试（TitanHide 对照）。
-        // 2026-10-15 的 #UD 根因是 handler_vmcall_rip 使用宿主 dwm CR3 翻译 guest RIP；
-        // KVA shadow/地址空间切换后查找失败，vmexit_vmcall_handler 才把自定义 VMCALL
-        // 误报成 guest #UD。VT_Driver 已改为使用当前 GUEST_CR3 并增加精确 rip 回退，
-        // 因此这里恢复 TitanHide 同语义的完整查询/句柄保护面。
-        if (g_EptHookSelectionMask & HOOK_SELECTION_DBGK_OPEN_PROCESS_DEBUG_PORT)
-            Hook_DbgkOpenProcessDebugPort();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_QUERY_INFORMATION_PROCESS)
-            Hook_NtQueryInformationProcess();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_SET_INFORMATION_PROCESS)
-            Hook_NtSetInformationProcess();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_QUERY_OBJECT)
-            Hook_NtQueryObject();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_QUERY_SYSTEM_INFORMATION)
-            Hook_NtQuerySystemInformation();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_SYSTEM_DEBUG_CONTROL)
-            Hook_NtSystemDebugControl();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_SET_INFORMATION_THREAD)
-            Hook_NtSetInformationThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_QUERY_INFORMATION_THREAD)
-            Hook_NtQueryInformationThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_GET_CONTEXT_THREAD)
-            Hook_NtGetContextThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_SET_CONTEXT_THREAD)
-            Hook_NtSetContextThread();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_CREATE_THREAD_EX)
-            Hook_NtCreateThreadEx();
-
-        //win32k.sys
-        if (g_EptHookSelectionMask & HOOK_SELECTION_VALIDATE_HWND)
-            Hook_ValidateHwnd(); //win32k中此函数必须先hook
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_USER_FIND_WINDOW_EX)
-            Hook_NtUserFindWindowEx();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_USER_WINDOW_FROM_POINT)
-            Hook_NtUserWindowFromPoint();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_USER_SET_WINDOWS_HOOK_EX)
-            Hook_NtUserSetWindowsHookEx();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_USER_BUILD_HWND_LIST)
-            Hook_NtUserBuildHwndList();
-        if (g_EptHookSelectionMask & HOOK_SELECTION_NT_USER_GET_CLASS_NAME)
-            Hook_NtUserGetClassName();
+        return FALSE;
     }
+
+    struct HookStep
+    {
+        ULONG64 mask;
+        const char* name;
+        BOOLEAN (*install)();
+    };
+    // Preserve installation order: NtCreateDebugObject first, ValidateHwnd
+    // first in the win32k group. Only hooks selected by the user are required.
+    const HookStep steps[] =
+    {
+        { HOOK_SELECTION_NT_CREATE_DEBUG_OBJECT, "Hook_NtCreateDebugObject", Hook_NtCreateDebugObject },
+        { HOOK_SELECTION_PSP_INSERT_PROCESS, "Hook_PspInsertProcess", Hook_PspInsertProcess },
+        { HOOK_SELECTION_NT_SET_INFORMATION_DEBUG_OBJECT, "Hook_NtSetInformationDebugObject", Hook_NtSetInformationDebugObject },
+        { HOOK_SELECTION_NT_REMOVE_PROCESS_DEBUG, "Hook_NtRemoveProcessDebug", Hook_NtRemoveProcessDebug },
+        { HOOK_SELECTION_NT_DEBUG_ACTIVE_PROCESS, "Hook_NtDebugActiveProcess", Hook_NtDebugActiveProcess },
+        { HOOK_SELECTION_NT_WAIT_FOR_DEBUG_EVENT, "Hook_NtWaitForDebugEvent", Hook_NtWaitForDebugEvent },
+        { HOOK_SELECTION_NT_DEBUG_CONTINUE, "Hook_NtDebugContinue", Hook_NtDebugContinue },
+        { HOOK_SELECTION_DBGK_MAP_VIEW_OF_SECTION, "Hook_DbgkMapViewOfSection", Hook_DbgkMapViewOfSection },
+        { HOOK_SELECTION_DBGK_UNMAP_VIEW_OF_SECTION, "Hook_DbgkUnMapViewOfSection", Hook_DbgkUnMapViewOfSection },
+        { HOOK_SELECTION_DBGK_CREATE_THREAD, "Hook_DbgkCreateThread", Hook_DbgkCreateThread },
+        { HOOK_SELECTION_DBGK_EXIT_THREAD, "Hook_DbgkExitThread", Hook_DbgkExitThread },
+        { HOOK_SELECTION_DBGK_EXIT_PROCESS, "Hook_DbgkExitProcess", Hook_DbgkExitProcess },
+        { HOOK_SELECTION_DBGK_FORWARD_EXCEPTION, "Hook_DbgkForwardException", Hook_DbgkForwardException },
+        { HOOK_SELECTION_DBGKP_QUEUE_MESSAGE, "Hook_DbgkpQueueMessage", Hook_DbgkpQueueMessage },
+        { HOOK_SELECTION_PSP_CALL_THREAD_NOTIFY_ROUTINES, "Hook_PspCallThreadNotifyRoutines", Hook_PspCallThreadNotifyRoutines },
+        { HOOK_SELECTION_PSP_EXIT_THREAD, "Hook_PspExitThread", Hook_PspExitThread },
+        { HOOK_SELECTION_OBP_REFERENCE_OBJECT_BY_HANDLE_TAG, "Hook_ObpReferenceObjectByHandleWithTag", Hook_ObpReferenceObjectByHandleWithTag },
+        { HOOK_SELECTION_NT_CLOSE, "Hook_NtClose", Hook_NtClose },
+        { HOOK_SELECTION_NT_DUPLICATE_OBJECT, "Hook_NtDuplicateObject", Hook_NtDuplicateObject },
+        { HOOK_SELECTION_DBGK_OPEN_PROCESS_DEBUG_PORT, "Hook_DbgkOpenProcessDebugPort", Hook_DbgkOpenProcessDebugPort },
+        { HOOK_SELECTION_NT_QUERY_INFORMATION_PROCESS, "Hook_NtQueryInformationProcess", Hook_NtQueryInformationProcess },
+        { HOOK_SELECTION_NT_SET_INFORMATION_PROCESS, "Hook_NtSetInformationProcess", Hook_NtSetInformationProcess },
+        { HOOK_SELECTION_NT_QUERY_OBJECT, "Hook_NtQueryObject", Hook_NtQueryObject },
+        { HOOK_SELECTION_NT_QUERY_SYSTEM_INFORMATION, "Hook_NtQuerySystemInformation", Hook_NtQuerySystemInformation },
+        { HOOK_SELECTION_NT_SYSTEM_DEBUG_CONTROL, "Hook_NtSystemDebugControl", Hook_NtSystemDebugControl },
+        { HOOK_SELECTION_NT_SET_INFORMATION_THREAD, "Hook_NtSetInformationThread", Hook_NtSetInformationThread },
+        { HOOK_SELECTION_NT_QUERY_INFORMATION_THREAD, "Hook_NtQueryInformationThread", Hook_NtQueryInformationThread },
+        { HOOK_SELECTION_NT_GET_CONTEXT_THREAD, "Hook_NtGetContextThread", Hook_NtGetContextThread },
+        { HOOK_SELECTION_NT_SET_CONTEXT_THREAD, "Hook_NtSetContextThread", Hook_NtSetContextThread },
+        { HOOK_SELECTION_NT_CREATE_THREAD_EX, "Hook_NtCreateThreadEx", Hook_NtCreateThreadEx },
+        { HOOK_SELECTION_VALIDATE_HWND, "Hook_ValidateHwnd", Hook_ValidateHwnd },
+        { HOOK_SELECTION_NT_USER_FIND_WINDOW_EX, "Hook_NtUserFindWindowEx", Hook_NtUserFindWindowEx },
+        { HOOK_SELECTION_NT_USER_WINDOW_FROM_POINT, "Hook_NtUserWindowFromPoint", Hook_NtUserWindowFromPoint },
+        { HOOK_SELECTION_NT_USER_SET_WINDOWS_HOOK_EX, "Hook_NtUserSetWindowsHookEx", Hook_NtUserSetWindowsHookEx },
+        { HOOK_SELECTION_NT_USER_BUILD_HWND_LIST, "Hook_NtUserBuildHwndList", Hook_NtUserBuildHwndList },
+        { HOOK_SELECTION_NT_USER_GET_CLASS_NAME, "Hook_NtUserGetClassName", Hook_NtUserGetClassName },
+    };
+
+    for (const HookStep& step : steps)
+    {
+        if ((g_EptHookSelectionMask & step.mask) != 0 && !step.install())
+        {
+            outFile("EPT hook 初始化失败: %s；回滚全部处理器上的已安装项.", step.name);
+            // Include partially installed hooks on the failing CPU broadcast.
+            // UnEptHook must finish before the caller releases Dbgk state.
+            UnEptHook();
+            return FALSE;
+        }
+    }
+    return TRUE;
 }

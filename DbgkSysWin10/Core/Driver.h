@@ -577,7 +577,7 @@ NTSTATUS DbgkOpenProcessDebugPort(
 void CreateRemoteThread(IN PUSER_DATA userData);
 
 //初始化保护
-VOID InitProtect(IN PDRIVER_OBJECT DriverObject);
+NTSTATUS InitProtect(IN PDRIVER_OBJECT DriverObject);
 
 // 保护路径专用日志：写入 C:\Logs\driver.xml（非 PASSIVE_LEVEL 时退回 DbgPrint）
 VOID ProtectLog(IN const char* format, ...);
@@ -598,7 +598,7 @@ EXTERN_C
 PVOID DbgkCreateThread_CMP_Debugport_01();
 
 VOID SetupHook_DbgkCreateThread_CMP_Debugport();
-VOID SetupHook_PspExitThread_CMP_Debugport();
+BOOLEAN SetupHook_PspExitThread_CMP_Debugport();
 
 KPROCESSOR_MODE KeGetPreviousMode();
 

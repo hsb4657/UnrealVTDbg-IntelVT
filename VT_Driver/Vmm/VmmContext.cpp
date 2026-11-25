@@ -150,7 +150,7 @@ void free_vmm_context() // 释放VMM全局资源与每核VCPU相关内存，避�
 						if (g_vmm_context.vcpu[i].ept_state->ept_page_table != nullptr)
 						{
 							// ept::cleanup_page_table(*g_vmm_context.vcpu[i].ept_state); // 旧逻辑：只在ept_page_table非空时清理，部分失败路径会漏掉RAM范围缓存。
-							free_vmm_page_aligned(g_vmm_context.vcpu[i].ept_state->ept_page_table); // 释放EPT页表，避免大量物理页泄漏
+							free_pool(g_vmm_context.vcpu[i].ept_state->ept_page_table); // 释放EPT页表，避免大量物理页泄漏
 							g_vmm_context.vcpu[i].ept_state->ept_page_table = nullptr;
 						}
 

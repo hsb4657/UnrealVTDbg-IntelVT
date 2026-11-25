@@ -283,7 +283,25 @@ VOID InitSymbolsTable(IN PUSER_DATA userData, IN PIRP pIrp)
 
     if (!wasInitialized)
     {
-        SetupEptHook();
+        if (!SetupEptHook())
+        {
+            const NTSTATUS cleanupStatus = DbgkUnInitialize();
+            if (NT_SUCCESS(cleanupStatus))
+            {
+                hvgt::release_hook_page_pins();
+            }
+            else
+            {
+                // The close callback may still enter this driver. Keep its state,
+                // pins and image resident, and reject subsequent IOCTLs.
+                DisableDbgkHotUnload();
+                InterlockedExchange(&g_DbgkDriverUnloading, 1);
+                outLog("InitSymbolsTable rollback failed: 0x%X; reboot required.", cleanupStatus);
+            }
+            *output = INIT_SYMBOLS_STATUS_EPT_HOOK;
+            outLog("InitSymbolsTable failed: EPT hook installation rolled back.");
+            return;
+        }
     }
     else
     {

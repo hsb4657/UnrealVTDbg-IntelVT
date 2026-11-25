@@ -145,33 +145,33 @@
     </Reference>
   </ItemGroup>
   <!--
-    Runtime binaries are copied by StageRuntime when they already exist.
-    They must not be ProjectReference entries: selecting UnrealDbgWinUI for
-    rebuild must rebuild only the GUI, while a solution-wide build still
-    builds every project independently.
+    Solution dependencies build all backends before this project stages them.
+    No ProjectReference is needed: building this vcxproj directly remains UI-only.
+    Prefer solution outputs; project-local outputs are a standalone-build fallback.
   -->
   <Target Name="StageRuntime" AfterTargets="Build">
+    <ItemGroup Condition="'$(BuildingSolutionFile)' == 'true' and '$(Platform)' == 'x64'">
+      <_RequiredBackend Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\UnrealDbgDll.dll;$(MSBuildThisFileDirectory)..\x64\$(Configuration)\Hook64.dll;$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin10.sys;$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin11.sys;$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VT_Driver.sys" />
+    </ItemGroup>
+    <Error Condition="'@(_RequiredBackend)' != '' and !Exists('%(_RequiredBackend.Identity)')" Text="缺少本次解决方案构建的后端产物：%(_RequiredBackend.Identity)" />
     <MakeDir Directories="$(OutDir)bin;$(OutDir)Config;$(OutDir)Log;$(OutDir)Symbols;$(OutDir)Certificates" />
     <ItemGroup>
       <_Runtime Include="$(WindowsAppSDKPackageDir)runtimes\win-x64\native\Microsoft.WindowsAppRuntime.Bootstrap.dll" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\UnrealDbgDll.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\UnrealDbgDll.dll')" />
-      <_Runtime Include="$(MSBuildThisFileDirectory)..\UnrealDbgDll\x64\$(Configuration)\UnrealDbgDll.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\UnrealDbgDll\x64\$(Configuration)\UnrealDbgDll.dll')" />
+      <_Runtime Include="$(MSBuildThisFileDirectory)..\UnrealDbgDll\x64\$(Configuration)\UnrealDbgDll.dll" Condition="'$(BuildingSolutionFile)' != 'true' and !Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\UnrealDbgDll.dll') and Exists('$(MSBuildThisFileDirectory)..\UnrealDbgDll\x64\$(Configuration)\UnrealDbgDll.dll')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\Hook64.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\Hook64.dll')" />
-      <_Runtime Include="$(MSBuildThisFileDirectory)..\Hook\x64\$(Configuration)\Hook64.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\Hook\x64\$(Configuration)\Hook64.dll')" />
+      <_Runtime Include="$(MSBuildThisFileDirectory)..\Hook\x64\$(Configuration)\Hook64.dll" Condition="'$(BuildingSolutionFile)' != 'true' and !Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\Hook64.dll') and Exists('$(MSBuildThisFileDirectory)..\Hook\x64\$(Configuration)\Hook64.dll')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin10.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin10.sys')" />
-      <_Runtime Include="$(MSBuildThisFileDirectory)..\DbgkSysWin10\x64\$(Configuration)\DbgkSysWin10.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\DbgkSysWin10\x64\$(Configuration)\DbgkSysWin10.sys')" />
+      <_Runtime Include="$(MSBuildThisFileDirectory)..\DbgkSysWin10\x64\$(Configuration)\DbgkSysWin10.sys" Condition="'$(BuildingSolutionFile)' != 'true' and !Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin10.sys') and Exists('$(MSBuildThisFileDirectory)..\DbgkSysWin10\x64\$(Configuration)\DbgkSysWin10.sys')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin11.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin11.sys')" />
-      <_Runtime Include="$(MSBuildThisFileDirectory)..\DbgkSysWin11\x64\$(Configuration)\DbgkSysWin11.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\DbgkSysWin11\x64\$(Configuration)\DbgkSysWin11.sys')" />
+      <_Runtime Include="$(MSBuildThisFileDirectory)..\DbgkSysWin11\x64\$(Configuration)\DbgkSysWin11.sys" Condition="'$(BuildingSolutionFile)' != 'true' and !Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\DbgkSysWin11.sys') and Exists('$(MSBuildThisFileDirectory)..\DbgkSysWin11\x64\$(Configuration)\DbgkSysWin11.sys')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VT_Driver.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VT_Driver.sys')" />
-      <_Runtime Include="$(MSBuildThisFileDirectory)..\VT_Driver\x64\$(Configuration)\VT_Driver.sys" Condition="Exists('$(MSBuildThisFileDirectory)..\VT_Driver\x64\$(Configuration)\VT_Driver.sys')" />
+      <_Runtime Include="$(MSBuildThisFileDirectory)..\VT_Driver\x64\$(Configuration)\VT_Driver.sys" Condition="'$(BuildingSolutionFile)' != 'true' and !Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VT_Driver.sys') and Exists('$(MSBuildThisFileDirectory)..\VT_Driver\x64\$(Configuration)\VT_Driver.sys')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\AIHelper.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\AIHelper.dll')" />
       <_Runtime Include="$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VMProtectSDK64.dll" Condition="Exists('$(MSBuildThisFileDirectory)..\x64\$(Configuration)\VMProtectSDK64.dll')" />
     </ItemGroup>
     <Copy SourceFiles="@(_Runtime)" DestinationFolder="$(OutDir)bin" SkipUnchangedFiles="true" Condition="'@(_Runtime)'!=''" />
-    <ItemGroup>
-      <_BinRuntime Include="$(OutDir)bin\*.dll;$(OutDir)bin\*.sys;$(OutDir)bin\*.exe" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_BinRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(_BinRuntime)'!=''" />
+    <Copy SourceFiles="@(_Runtime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(_Runtime)'!=''" />
     <MakeDir Directories="$(OutDir)Symbols" />
     <Delete Files="$(OutDir)Symbols\DbgkSysWin10.pdb;$(OutDir)Symbols\DbgkSysWin11.pdb" />
     <MakeDir Directories="$(OutDir)Metadata" />

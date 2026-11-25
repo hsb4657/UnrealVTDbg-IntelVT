@@ -14,11 +14,64 @@
 #include "../Common/Shared/HookSelection.h"
 
 #include <atomic>
+#include <mutex>
 
 #pragma comment(lib, "iphlpapi.lib")
 
 Logger logger("UnrealDbgDll.log");
 static std::atomic<ULONG64> g_hookSelectionMask{ HOOK_SELECTION_ALL };
+
+namespace
+{
+    std::mutex g_sessionMutex;
+    HANDLE g_heartbeatStop = nullptr;
+    HANDLE g_heartbeatThread = nullptr;
+    std::atomic<bool> g_sessionActive{ false };
+    std::atomic<bool> g_driversNeedCleanup{ false };
+    std::atomic<bool> g_terminalHookMayHaveRun{ false };
+
+    BOOL TryUninitializeSessionDrivers()
+    {
+        // A terminal PspExitThread call can outlive the state guard. We cannot
+        // prove its instruction pointer has left the driver/trampoline allocations.
+        // Never free those allocations merely because the callback count is zero.
+        if (g_terminalHookMayHaveRun.load(std::memory_order_acquire))
+        {
+            logger.outDebug(L"本次会话可能运行过 PspExitThread Hook，暂不支持安全热卸载；保留驱动，请重启系统回收。");
+            return FALSE;
+        }
+        return UnInitialize();
+    }
+
+    void JoinHeartbeat()
+    {
+        if (g_heartbeatStop) SetEvent(g_heartbeatStop);
+        if (g_heartbeatThread)
+        {
+            WaitForSingleObject(g_heartbeatThread, INFINITE);
+            CloseHandle(g_heartbeatThread);
+            g_heartbeatThread = nullptr;
+        }
+        if (g_heartbeatStop) CloseHandle(g_heartbeatStop);
+        g_heartbeatStop = nullptr;
+    }
+}
+
+extern "C" __declspec(dllexport) BOOL __stdcall SessionActive_F3()
+{
+    return g_sessionActive.load(std::memory_order_acquire) ? TRUE : FALSE;
+}
+
+extern "C" __declspec(dllexport) BOOL __stdcall Shutdown_F3()
+{
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_sessionActive.store(false, std::memory_order_release);
+    JoinHeartbeat(); // Never wait for threads from DllMain / under the loader lock.
+    StopStartupWorkers();
+    if (g_driversNeedCleanup && !TryUninitializeSessionDrivers()) return FALSE;
+    g_driversNeedCleanup = false;
+    return TRUE;
+}
 
 //--------------------------------------------
 
@@ -342,7 +395,6 @@ bool IniSoftInfo()
             {
                 IniResult = false;
                 DisableCardOrAccount(cardnum);
-                exit(0);
                 return IniResult;
             }
         }
@@ -380,51 +432,43 @@ bool IniSoftInfo()
     }
 
 }
-void HeartBeat()
+DWORD WINAPI HeartBeat(void*)
 {
-
-    while (true)
+    bool failed = false;
+    try
     {
-#ifdef  USE_VMP
-        VMProtectBegin("HeartBeatM");
-#endif
-        Model::In_HeartBeatArgs HeartBeatArgs;
-        HeartBeatArgs.maccode = maccode;//必填
-        HeartBeatArgs.timestamp = Help::NetworkVerHelp::GetTimeStamp();//必填
-        HeartBeatArgs.requestflag = to_string(HeartBeatArgs.timestamp);//必填
-        HeartBeatArgs.cardnumorusername = cardnum;//必填
-        HeartBeatArgs.token = token;//必填
-        HeartBeatArgs.heartbeatkey = heartbeatkey;
-
-        Model::Result	result = Help::NetworkVerHelp::GetHeartBeat(HeartBeatArgs);
-        if (result.code == 0)
+        while (WaitForSingleObject(g_heartbeatStop, 0) == WAIT_TIMEOUT)
         {
-            Model::Out_heartBeat heartBeatResult = Help::NetworkVerHelp::ConvertHeartBeat(result.data);
-            if (heartBeatResult.heartbeatkey != (const char*)_xor_("") && heartBeatResult.requestflag == HeartBeatArgs.requestflag)
-            {
-                heartbeatkey = heartBeatResult.heartbeatkey;
-            }
-            else
+            Model::In_HeartBeatArgs args;
+            args.maccode = maccode;
+            args.timestamp = Help::NetworkVerHelp::GetTimeStamp();
+            args.requestflag = to_string(args.timestamp);
+            args.cardnumorusername = cardnum;
+            args.token = token;
+            args.heartbeatkey = heartbeatkey;
+            Model::Result result = Help::NetworkVerHelp::GetHeartBeat(args);
+            if (WaitForSingleObject(g_heartbeatStop, 0) != WAIT_TIMEOUT) break;
+            if (result.code != 0) { failed = true; break; }
+            auto reply = Help::NetworkVerHelp::ConvertHeartBeat(result.data);
+            if (reply.heartbeatkey.empty() || reply.requestflag != args.requestflag)
             {
                 DisableCardOrAccount(cardnum);
-                VMProtectEnd();
-                exit(0);
-
+                failed = true;
+                break;
             }
+            heartbeatkey = reply.heartbeatkey;
+            if (WaitForSingleObject(g_heartbeatStop, 300 * 1000) != WAIT_TIMEOUT) break;
         }
-        else
-        {
-            Sleep(1000);
-            LoginOut(cardnum);
-            VMProtectEnd();
-            exit(0);
-        }
-        Sleep(300 * 1000);
-#ifdef  USE_VMP
-        VMProtectEnd();
-#endif
     }
-
+    catch (...) { failed = true; }
+    if (failed)
+    {
+        g_sessionActive.store(false, std::memory_order_release);
+        logger.outDebug(L"验证心跳失败，正在停止调试会话；请重新初始化。");
+        StopStartupWorkers();
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
+    }
+    return 0;
 }
 bool LoginByCard(string _CardNum)
 {
@@ -454,7 +498,6 @@ bool LoginByCard(string _CardNum)
 
             DisableCardOrAccount(_CardNum);
             LoginOut(_CardNum);
-            exit(0);
             return IsLoginOk;
         }
 
@@ -565,6 +608,13 @@ extern "C" __declspec(dllexport) BOOL __stdcall ConfigureHooks_F3(ULONG64 mask)
 
 BOOL Initialize_F3(ULONG64 key)   //初始化驱动 key用户  驱动对比
 {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (g_sessionActive.load(std::memory_order_acquire)) return TRUE;
+    JoinHeartbeat();
+    StopStartupWorkers();
+    if (g_driversNeedCleanup && !TryUninitializeSessionDrivers()) return FALSE;
+    g_driversNeedCleanup = false;
+
    // VMProtectBegin("Initialize_F3");
     //logger.outDebug(L"Key 十六进制数据: 0x%016llX", key);
 
@@ -584,29 +634,50 @@ BOOL Initialize_F3(ULONG64 key)   //初始化驱动 key用户  驱动对比
 	std::wstring processPath = FileSystem::GetModuleDirectory(NULL);
     //VMProtectEnd();
 
+    g_driversNeedCleanup = true;
 	if (!_Initialize(processPath.c_str()))  //加载驱动
 	{
         logger.outDebug(_xor_(L"驱动初始化失败"));
-        (void)UnInitialize();
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
         return FALSE;
 	}
 
     if (!InitSymbolsTable(key))
     {
         logger.outDebug(_xor_(L"符号表初始化失败"));
-        (void)UnInitialize();
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
         return FALSE;
     }
+
+    // Failed partial installations are also pinned by the kernel before the hook
+    // is published; UnInitialize checks the service result before touching VT.
+    if ((g_hookSelectionMask.load(std::memory_order_acquire) & HOOK_SELECTION_PSP_EXIT_THREAD) != 0)
+        g_terminalHookMayHaveRun.store(true, std::memory_order_release);
 
     if (!SendDebuggerDataToDriver(GetCurrentProcessId()))
     {
         logger.outDebug(_xor_(L"宿主调试器登记失败"));
-        (void)UnInitialize();
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
         return FALSE;
     }
 
-    std::thread HeartBeatThread(HeartBeat);
-    HeartBeatThread.detach();
+    g_heartbeatStop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_heartbeatStop)
+    {
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
+        return FALSE;
+    }
+    EnableStartupWorkers();
+    g_sessionActive.store(true, std::memory_order_release);
+    g_heartbeatThread = CreateThread(nullptr, 0, HeartBeat, nullptr, 0, nullptr);
+    if (!g_heartbeatThread)
+    {
+        g_sessionActive = false;
+        StopStartupWorkers();
+        JoinHeartbeat();
+        g_driversNeedCleanup = !TryUninitializeSessionDrivers();
+        return FALSE;
+    }
 
     logger.outDebug(_xor_(L"初始化成功"));
     return TRUE;
@@ -667,8 +738,9 @@ BOOL LoadSymbolsTable(ULONG64 key)
     info.key = key;
     DWORD dwSuccess = 520;
     bRet = SendUserDataToDriver(IOCTL_LOAD_SYMBOLS_TABLE, &info, sizeof(RING3_VERIFY), &dwSuccess, sizeof(DWORD), &BytesReturned);
-    if (dwSuccess != 1998)
+    if (!bRet || dwSuccess != INIT_SYMBOLS_STATUS_SUCCESS)
     {
+        logger.outDebug(L"驱动初始化失败，状态码: 0x%08lX", dwSuccess);
         VMProtectEnd();
         return FALSE;
     }

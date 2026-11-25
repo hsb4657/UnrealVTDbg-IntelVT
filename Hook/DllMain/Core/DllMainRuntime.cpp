@@ -66,6 +66,9 @@ namespace HookDllMainInternal
             keepModuleReference = SetupHook();
             if (!keepModuleReference)
             {
+                // Setup may have committed some detours before failing. Never
+                // release the module while a failed rollback still targets it.
+                keepModuleReference = !UnHook();
                 exitCode = 1;
             }
             else if (!VerifyDriverHandshake())

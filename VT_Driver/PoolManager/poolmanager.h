@@ -30,11 +30,17 @@ namespace pool_manager
         REQUEST_SLOT_ALLOCATING = 3
     };
 
+    struct __pool_table;
+    constexpr unsigned pool_hash_count = 256;
+    enum pool_state : LONG { POOL_FREE, POOL_BUSY, POOL_DIRTY, POOL_CLEANING };
+
     struct __pool_manager
     {
         __request_new_allocation* allocation_requests;
         PLIST_ENTRY list_of_allocated_pools;  //已分配池列表
-        KSPIN_LOCK lock_for_reading_pool;
+        KSPIN_LOCK lock_for_reading_pool; // Only non-root publication / teardown list.
+        void* volatile by_intention[5];
+        void* volatile by_address[pool_hash_count];
         volatile long is_request_for_allocation_recived;
         KEVENT refill_event; // 非 root 系统线程的补池唤醒事件
         PETHREAD refill_thread; // 持有对象引用，卸载时可等待线程退出
@@ -47,10 +53,27 @@ namespace pool_manager
         unsigned __int64  size;  //缓冲区大小
         allocation_intention intention;  //该内存用于什么
         LIST_ENTRY pool_list;
-        bool is_busy;  //内存是否已被使用
-        bool recycled; //回收
+        volatile LONG state;
+        bool recycled; // Owner-only while BUSY; worker publishes before FREE.
+        __pool_table* next_intention; // Immutable after publication; never freed while VMX is active.
+        __pool_table* next_address;
+        unsigned __int64 physical_address;
         bool physically_aligned; //缓冲区使用连续物理内存分配,释放时必须用对应函数
     };
+
+    inline __pool_table* load_pool_head(void* volatile* head)
+    {
+        return static_cast<__pool_table*>(InterlockedCompareExchangePointer(head, nullptr, nullptr));
+    }
+
+    inline unsigned pool_hash(const void* address)
+    {
+        const auto value = reinterpret_cast<unsigned __int64>(address);
+        return static_cast<unsigned>((value >> 4) ^ (value >> 12) ^ (value >> 20)) & (pool_hash_count - 1);
+    }
+
+    unsigned __int64 pool_physical_address(const void* base);
+    void recycle_released_pools();
 
     /// <summary>
     /// Writes all information about allocated pools
@@ -102,38 +125,25 @@ namespace pool_manager
 	template <typename T>
 	T request_pool(allocation_intention intention, bool new_pool, unsigned __int64 size)
 	{
-		PLIST_ENTRY current = 0;
-		void* address = 0;
-		bool is_recycled = false;
-		__pool_table* pool_table;
-
-		auto scan_for_pool = [&]() -> void
-		{
-			current = g_vmm_context.pool_manager->list_of_allocated_pools;
-
-			KIRQL old_irql;
-			KeAcquireSpinLock(&g_vmm_context.pool_manager->lock_for_reading_pool, &old_irql);
-
-			while (g_vmm_context.pool_manager->list_of_allocated_pools != current->Flink)
-			{
-				current = current->Flink;
-
-				// Get the head of the record
-				pool_table = (__pool_table*)CONTAINING_RECORD(current, __pool_table, pool_list);
-
-				if (pool_table->intention == intention && pool_table->is_busy == false)
-				{
-					pool_table->is_busy = true;
-					is_recycled = pool_table->recycled;
-					// ✅ P1-001 修复：清除 recycled 标记，使池可以正常复用
-					pool_table->recycled = false;
-					address = pool_table->address;
-					break;
-				}
-			}
-
-			KeReleaseSpinLock(&g_vmm_context.pool_manager->lock_for_reading_pool, old_irql);
-		};
+        auto* manager = g_vmm_context.pool_manager;
+        if (!manager || intention <= INTENTION_NONE || intention > INTENTION_TRACK_HOOKED_FUNCTIONS)
+            return (T)nullptr;
+        void* address = nullptr;
+        bool is_recycled = false;
+        auto scan_for_pool = [&]()
+        {
+            for (auto* entry = load_pool_head(&manager->by_intention[intention]);
+                entry; entry = entry->next_intention)
+            {
+                if (entry->size >= size &&
+                    InterlockedCompareExchange(&entry->state, POOL_BUSY, POOL_FREE) == POOL_FREE)
+                {
+                    address = entry->address;
+                    is_recycled = entry->recycled;
+                    break;
+                }
+            }
+        };
 
 		scan_for_pool();
 
@@ -148,8 +158,8 @@ namespace pool_manager
 			// 仅 PASSIVE 且不在 VMX root 时允许同步补池。VMCALL 在来宾 PASSIVE
 			// 发起时，IRQL 仍然是 PASSIVE，但 CPU 已处于 IF=0 的 VMX root；
 			// 此时同步分配会让整个物理处理器无法响应时钟中断。
-			if (KeGetCurrentIrql() == PASSIVE_LEVEL &&
-				!is_current_context_vmx_root())
+			if (!is_current_context_vmx_root() &&
+                KeGetCurrentIrql() == PASSIVE_LEVEL)
 			{
 				(void)request_allocation(size, 1, intention);
 				(void)perform_allocation();
@@ -166,7 +176,7 @@ namespace pool_manager
 		// Pre-allocated pools are consumed sequentially.  Keep a queued request behind
 		// a newly taken buffer so the next allocation can be served without stalling.
 		//
-		if (new_pool == true && is_recycled == false)
+		if (new_pool == true && address != nullptr && is_recycled == false)
 		{
 			(void)request_allocation(size, 1, intention);
 		}

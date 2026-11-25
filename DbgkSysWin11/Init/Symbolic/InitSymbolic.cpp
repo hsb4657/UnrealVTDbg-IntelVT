@@ -284,7 +284,14 @@ VOID InitSymbolsTable(IN PUSER_DATA userData, IN PIRP pIrp)
 
     if (!wasInitialized)
     {
-        SetupEptHook();
+        if (!SetupEptHook())
+        {
+            DbgkUnInitialize();
+            hvgt::release_hook_page_pins();
+            *output = INIT_SYMBOLS_STATUS_EPT_HOOK;
+            outLog("InitSymbolsTable failed: EPT hook installation rolled back.");
+            return;
+        }
     }
     else
     {

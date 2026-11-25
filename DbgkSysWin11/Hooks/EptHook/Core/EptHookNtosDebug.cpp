@@ -1,61 +1,67 @@
 ﻿#include "EptHookCommon.h"
 
 EXTERN_C
-VOID Hook_DbgkOpenProcessDebugPort()
+BOOLEAN Hook_DbgkOpenProcessDebugPort()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkOpenProcessDebugPort, DbgkOpenProcessDebugPort, (PVOID*)&Original_DbgkOpenProcessDebugPort, "DbgkOpenProcessDebugPort", "DbgkOpenProcessDebugPort");
+        return HookEptRoutine(Sys_DbgkOpenProcessDebugPort, DbgkOpenProcessDebugPort, (PVOID*)&Original_DbgkOpenProcessDebugPort, "DbgkOpenProcessDebugPort", "DbgkOpenProcessDebugPort");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtCreateDebugObject()
+BOOLEAN Hook_NtCreateDebugObject()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtCreateDebugObject, NtCreateDebugObject, NULL, "NtCreateDebugObject", "NtCreateDebugObject");
+        return HookEptRoutine(Sys_NtCreateDebugObject, NtCreateDebugObject, NULL, "NtCreateDebugObject", "NtCreateDebugObject");
     }
     else
     {
         outLog("Hook_NtCreateDebugObject 失败");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtSetInformationDebugObject()
+BOOLEAN Hook_NtSetInformationDebugObject()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtSetInformationDebugObject, NtSetInformationDebugObject, NULL, "NtSetInformationDebugObject", "NtSetInformationDebugObject");
+        return HookEptRoutine(Sys_NtSetInformationDebugObject, NtSetInformationDebugObject, NULL, "NtSetInformationDebugObject", "NtSetInformationDebugObject");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtRemoveProcessDebug()
+BOOLEAN Hook_NtRemoveProcessDebug()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtRemoveProcessDebug, NtRemoveProcessDebug, NULL, "NtRemoveProcessDebug", "NtRemoveProcessDebug");
+        return HookEptRoutine(Sys_NtRemoveProcessDebug, NtRemoveProcessDebug, NULL, "NtRemoveProcessDebug", "NtRemoveProcessDebug");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtDebugActiveProcess()
+BOOLEAN Hook_NtDebugActiveProcess()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtDebugActiveProcess, NtDebugActiveProcess, NULL, "NtDebugActiveProcess", "NtDebugActiveProcess");
+        return HookEptRoutine(Sys_NtDebugActiveProcess, NtDebugActiveProcess, NULL, "NtDebugActiveProcess", "NtDebugActiveProcess");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtWaitForDebugEvent()
+BOOLEAN Hook_NtWaitForDebugEvent()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtWaitForDebugEvent, NtWaitForDebugEvent, NULL, "NtWaitForDebugEvent", "NtWaitForDebugEvent");
+        return HookEptRoutine(Sys_NtWaitForDebugEvent, NtWaitForDebugEvent, NULL, "NtWaitForDebugEvent", "NtWaitForDebugEvent");
     }
+    return FALSE;
 }
 
 EXTERN_C
@@ -68,57 +74,63 @@ VOID Hook_KiDispatchException()
 }
 
 EXTERN_C
-VOID Hook_PspInsertProcess()
+BOOLEAN Hook_PspInsertProcess()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_PspInsertProcess, PspInsertProcess, NULL, "PspInsertProcess", "PspInsertProcess");
+        return HookEptRoutine(Sys_PspInsertProcess, PspInsertProcess, NULL, "PspInsertProcess", "PspInsertProcess");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_NtDebugContinue()
+BOOLEAN Hook_NtDebugContinue()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_NtDebugContinue, NtDebugContinue, NULL, "NtDebugContinue", "NtDebugContinue");
+        return HookEptRoutine(Sys_NtDebugContinue, NtDebugContinue, NULL, "NtDebugContinue", "NtDebugContinue");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkMapViewOfSection()
+BOOLEAN Hook_DbgkMapViewOfSection()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkMapViewOfSection, DbgkMapViewOfSection, NULL, "DbgkMapViewOfSection", "DbgkMapViewOfSection");
+        return HookEptRoutine(Sys_DbgkMapViewOfSection, DbgkMapViewOfSection, NULL, "DbgkMapViewOfSection", "DbgkMapViewOfSection");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkUnMapViewOfSection()
+BOOLEAN Hook_DbgkUnMapViewOfSection()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkUnMapViewOfSection, DbgkUnMapViewOfSection, NULL, "DbgkUnMapViewOfSection", "DbgkUnMapViewOfSection");
+        return HookEptRoutine(Sys_DbgkUnMapViewOfSection, DbgkUnMapViewOfSection, NULL, "DbgkUnMapViewOfSection", "DbgkUnMapViewOfSection");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkForwardException()
+BOOLEAN Hook_DbgkForwardException()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkForwardException, DbgkForwardException, NULL, "DbgkForwardException", "DbgkForwardException");
+        return HookEptRoutine(Sys_DbgkForwardException, DbgkForwardException, NULL, "DbgkForwardException", "DbgkForwardException");
     }
+    return FALSE;
 }
 
 EXTERN_C
-VOID Hook_DbgkpQueueMessage()
+BOOLEAN Hook_DbgkpQueueMessage()
 {
     if (g_IsInitGlobalVariable)
     {
-        HookEptRoutine(Sys_DbgkpQueueMessage, DbgkpQueueMessage, NULL, "DbgkpQueueMessage", "DbgkpQueueMessage");
+        return HookEptRoutine(Sys_DbgkpQueueMessage, DbgkpQueueMessage, NULL, "DbgkpQueueMessage", "DbgkpQueueMessage");
     }
+    return FALSE;
 }
 
 // 旧项目保留的禁用路径：NtShutdownSystem 的 EPT hook wrapper。

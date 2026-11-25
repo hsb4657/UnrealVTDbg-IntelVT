@@ -6,6 +6,7 @@
 #include "../../../hypervisor_routines.h"
 #include "../../../poolmanager.h"
 #include "../../../vmx.h"
+#include "../../../Vmcs/VmcsApi.h"
 
 namespace ept
 {
@@ -16,16 +17,26 @@ namespace ept
 	/// <returns></returns>
 	bool unhook_function(__ept_state& ept_state, unsigned __int64 virtual_address)
 	{
-		unsigned __int64 physical_address = MmGetPhysicalAddress((void*)virtual_address).QuadPart;
-		if (physical_address == 0)
-		{
-			return false;
-		}
+        __ept_hooked_page_info* hooked_page_info = nullptr;
+        // Search this vCPU's resident metadata; the original guest page may be paged out.
+        for (auto* link = ept_state.hooked_page_list.Flink;
+            link != &ept_state.hooked_page_list && !hooked_page_info; link = link->Flink)
+        {
+            auto* page = CONTAINING_RECORD(link, __ept_hooked_page_info, hooked_page_list);
+            if (page->removing || page->Options != EPTO_HOOK_FUNCTION) continue;
+            for (auto* item = page->hooked_functions_list.Flink;
+                item != &page->hooked_functions_list; item = item->Flink)
+            {
+                auto* function = CONTAINING_RECORD(item, __ept_hooked_function_info, hooked_function_list);
+                if (!function->removing && reinterpret_cast<unsigned __int64>(function->virtual_address) == virtual_address)
+                {
+                    InterlockedIncrement(&page->hot_reference_count);
+                    hooked_page_info = page;
+                    break;
+                }
+            }
+        }
 
-		// 页面热引用固定记录生命周期；页面正在删除时取不到引用，
-		// 热路径也不会再对该页建立新引用。
-		__ept_hooked_page_info* hooked_page_info =
-			ept::acquire_page_hot_reference(ept_state, GET_PFN(physical_address), EPTO_HOOK_FUNCTION);
 		if (hooked_page_info == nullptr)
 		{
 			return false;
@@ -40,8 +51,7 @@ namespace ept
 				CONTAINING_RECORD(current_hooked_function, __ept_hooked_function_info, hooked_function_list);
 
 			if (candidate->removing == 0 &&
-				MASK_EPT_PML1_OFFSET(virtual_address) ==
-					MASK_EPT_PML1_OFFSET(reinterpret_cast<unsigned __int64>(candidate->virtual_address)))
+				virtual_address == reinterpret_cast<unsigned __int64>(candidate->virtual_address))
 			{
 				hooked_function_info = candidate;
 				InterlockedExchange(&hooked_function_info->removing, 1);
@@ -64,7 +74,7 @@ namespace ept
 		{
 			RtlCopyMemory(
 				&hooked_function_info->fake_page_contents[function_page_offset],
-				hooked_function_info->virtual_address,
+				hooked_function_info->original_bytes,
 				hooked_function_info->hook_size);
 		}
 		void* const second_trampoline_address = hooked_function_info->second_trampoline_address;
@@ -170,7 +180,7 @@ namespace ept
 					{
 						RtlCopyMemory(
 							&hooked_function_info->fake_page_contents[function_page_offset],
-							hooked_function_info->virtual_address,
+							hooked_function_info->original_bytes,
 							hooked_function_info->hook_size);
 					}
 				}
@@ -208,7 +218,6 @@ namespace ept
 			// 摘链完成后才能释放热引用；释放后不得再访问 hooked_entry。
 			ept::release_page_hot_reference(ept_state, hooked_entry);
 			hooked_entry = nullptr;
-			ept::reclaim_retired_resources(ept_state);
 		}
 
 		// 引用归零的记录在安全点回收；仍有热引用的记录留在待回收链，

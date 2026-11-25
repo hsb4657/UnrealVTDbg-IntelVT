@@ -7,73 +7,76 @@ EXTERN_C
 VOID UnEptHook();
 
 EXTERN_C
-VOID SetupEptHook();
+VOID DisableDbgkHotUnload();
+
+EXTERN_C
+BOOLEAN SetupEptHook();
 
 EXTERN_C
 NTSTATUS ConfigureEptHookSelection(ULONG64 mask);
 
 EXTERN_C
-VOID Hook_DbgkOpenProcessDebugPort();
+BOOLEAN Hook_DbgkOpenProcessDebugPort();
 
 EXTERN_C
-VOID Hook_NtCreateDebugObject();
+BOOLEAN Hook_NtCreateDebugObject();
 
 EXTERN_C
-VOID Hook_NtSetInformationDebugObject();
+BOOLEAN Hook_NtSetInformationDebugObject();
 
 EXTERN_C
-VOID Hook_NtRemoveProcessDebug();
+BOOLEAN Hook_NtRemoveProcessDebug();
 
 EXTERN_C
-VOID Hook_NtDebugActiveProcess();
+BOOLEAN Hook_NtDebugActiveProcess();
 
 EXTERN_C
-VOID Hook_NtWaitForDebugEvent();
+BOOLEAN Hook_NtWaitForDebugEvent();
 
 EXTERN_C
 VOID Hook_KiDispatchException();
 
 EXTERN_C
-VOID Hook_PspInsertProcess();
+BOOLEAN Hook_PspInsertProcess();
 
 EXTERN_C
 VOID Hook_PspInsertThread();
 
 EXTERN_C
-VOID Hook_NtDebugContinue();
+BOOLEAN Hook_NtDebugContinue();
 
 EXTERN_C
-VOID Hook_DbgkMapViewOfSection();
+BOOLEAN Hook_DbgkMapViewOfSection();
 
 EXTERN_C
-VOID Hook_DbgkUnMapViewOfSection();
+BOOLEAN Hook_DbgkUnMapViewOfSection();
 
 EXTERN_C
-VOID Hook_NtQueryInformationThread();
+BOOLEAN Hook_NtQueryInformationThread();
 
 EXTERN_C
-VOID Hook_NtSetInformationThread();
+BOOLEAN Hook_NtSetInformationThread();
 
 EXTERN_C
-VOID Hook_NtQueryInformationProcess();
+BOOLEAN Hook_NtQueryInformationProcess();
 
 EXTERN_C
-VOID Hook_NtSetInformationProcess();
+BOOLEAN Hook_NtSetInformationProcess();
 
 EXTERN_C
-VOID Hook_NtQueryObject();
+BOOLEAN Hook_NtQueryObject();
 
 EXTERN_C
-VOID Hook_NtQuerySystemInformation();
+BOOLEAN Hook_NtQuerySystemInformation();
 
 EXTERN_C
-VOID Hook_NtSystemDebugControl();
+BOOLEAN Hook_NtSystemDebugControl();
 
 EXTERN_C
-VOID Hook_NtClose();
+BOOLEAN Hook_NtClose();
 
 EXTERN_C
-VOID Hook_NtDuplicateObject();
+BOOLEAN Hook_NtDuplicateObject();
 
 EXTERN_C
 VOID Hook_NtSuspendThread();
@@ -82,19 +85,19 @@ EXTERN_C
 VOID Hook_NtResumeThread();
 
 EXTERN_C
-VOID Hook_DbgkCreateThread();
+BOOLEAN Hook_DbgkCreateThread();
 
 EXTERN_C
-VOID Hook_DbgkExitThread();
+BOOLEAN Hook_DbgkExitThread();
 
 EXTERN_C
-VOID Hook_DbgkExitProcess();
+BOOLEAN Hook_DbgkExitProcess();
 
 EXTERN_C
-VOID Hook_DbgkForwardException();
+BOOLEAN Hook_DbgkForwardException();
 
 EXTERN_C
-VOID Hook_DbgkpQueueMessage();
+BOOLEAN Hook_DbgkpQueueMessage();
 
 EXTERN_C
 VOID Hook_KeStackAttachProcess();
@@ -112,13 +115,13 @@ EXTERN_C
 VOID Hook_MmProtectVirtualMemory();
 
 EXTERN_C
-VOID Hook_NtQueryInformationThread();
+BOOLEAN Hook_NtQueryInformationThread();
 
 EXTERN_C
-VOID Hook_NtGetContextThread();
+BOOLEAN Hook_NtGetContextThread();
 
 EXTERN_C
-VOID Hook_NtSetContextThread();
+BOOLEAN Hook_NtSetContextThread();
 
 EXTERN_C
 VOID Hook_NtShutdownSystem();
@@ -139,7 +142,7 @@ EXTERN_C
 VOID Hook_ObReferenceObjectByHandleWithTag();
 
 EXTERN_C
-VOID Hook_ObpReferenceObjectByHandleWithTag();
+BOOLEAN Hook_ObpReferenceObjectByHandleWithTag();
 
 EXTERN_C
 VOID Hook_ObfDereferenceObjectWithTag();
@@ -154,19 +157,19 @@ EXTERN_C
 VOID Hook_PspCreateUserContext();
 
 EXTERN_C
-VOID Hook_PspCallThreadNotifyRoutines();
+BOOLEAN Hook_PspCallThreadNotifyRoutines();
 
 EXTERN_C
 VOID Hook_NtTerminateProcess();
 
 EXTERN_C
-VOID Hook_PspExitThread();
+BOOLEAN Hook_PspExitThread();
 
 EXTERN_C
 VOID Hook_PspCreateThread();
 
 EXTERN_C
-VOID Hook_NtCreateThreadEx();
+BOOLEAN Hook_NtCreateThreadEx();
 
 EXTERN_C
 VOID Hook_PspAllocateThread();
@@ -177,22 +180,22 @@ VOID Hook_DbgkpCloseObject();
 
 //win32k.sys
 EXTERN_C
-VOID Hook_NtUserFindWindowEx();
+BOOLEAN Hook_NtUserFindWindowEx();
 
 EXTERN_C
-VOID Hook_ValidateHwnd();
+BOOLEAN Hook_ValidateHwnd();
 
 EXTERN_C
-VOID Hook_NtUserWindowFromPoint();
+BOOLEAN Hook_NtUserWindowFromPoint();
 
 EXTERN_C
-VOID Hook_NtUserSetWindowsHookEx();
+BOOLEAN Hook_NtUserSetWindowsHookEx();
 
 EXTERN_C
-VOID Hook_NtUserBuildHwndList();
+BOOLEAN Hook_NtUserBuildHwndList();
 
 EXTERN_C
-VOID Hook_NtUserGetClassName();
+BOOLEAN Hook_NtUserGetClassName();
 
 // 反-反调试共享判定：虚拟调试目标（attach 路径查 g_DebugProcessList，
 // create 路径查 EPROCESS->DebugPort 是否为 Hvm_DebugObject）。

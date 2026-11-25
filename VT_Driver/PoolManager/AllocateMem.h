@@ -26,8 +26,8 @@ inline PVOID allocate_vmm_page_aligned(unsigned __int64 size)
     PHYSICAL_ADDRESS highest_address;
     highest_address.QuadPart = MAXULONG64;
 
-    // EPT/IO bitmap/VMX 等硬件结构要求 4KB 物理对齐;普通池分配只保证虚拟对齐,
-    // 不保证 MmGetPhysicalAddress 后的 4KB 对齐,因此这些页面必须走连续物理内存分配。
+    // 多页缓冲确实要求物理连续时使用此分配器。普通池 >= PAGE_SIZE 也保证页对齐，
+    // 但不保证跨页物理连续；EPT 各级页表按页登记 PA，可使用普通非分页池。
     return MmAllocateContiguousMemory(size, highest_address);
 }
 
