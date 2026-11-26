@@ -68,3 +68,13 @@ UnrealDbgWinUI/x64/
 
 # ===== 生成的二进制文件（全局忽略）=====
 *.exe
+
+# ===== 漏驱文件（仅本地测试机使用，禁止入库）=====
+RTCore64.sys
+iqvw64e.sys
+**/RTCore64.sys
+**/iqvw64e.sys
+
+# ===== macOS 目录元数据 =====
+.DS_Store
+**/.DS_Store

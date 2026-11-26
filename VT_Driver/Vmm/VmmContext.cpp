@@ -320,6 +320,11 @@ bool allocate_vmm_context() // 初始化全局VMM资源，包含每核VCPU与EPT
 	// hv_presence 只决定 CPUID/CR4 是否向 guest 暴露 hypervisor。
 	g_vmm_context.hv_presence = false;
 
+	// TSC 偏移必须在新一轮装载时归零：上一次运行累计的偏移是按旧 VMCS/TSC_OFFSET 减出来的，
+	// 新 VMCS 里 TSC_OFFSET 初值是 0，若把旧偏移带进来，guest 会在第一次对账时看到时间倒退，
+	// 这比"不做隐藏"危险得多（Windows 时间子系统会直接判定时钟回绕）。
+	g_vmm_context.tsc_offset = 0;
+
 	// Windows 的 IsProcessorFeaturePresent(PF_VIRT_FIRMWARE_ENABLED) 会读取
 	// KUSER_SHARED_DATA.ProcessorFeatures[21]。这里绝不能直接写该共享页：
 	// 在 Windows 11 26100 上，该页内核别名（0xFFFFF780`00000000）的系统 PTE

@@ -89,6 +89,11 @@ void fill_vmcs(__vcpu* vcpu, void* guest_rsp) // 填充 VMCS
     hv::vmwrite<unsigned __int64>(VM_ENTRY_CONTROLS, vcpu->vmcs_effective_controls.entry);
     // VMCS 链接指针初始化为全 1，表示无链接 VMCS
     hv::vmwrite<unsigned __int64>(VMCS_LINK_POINTER, MAXULONG64); // 设置为推荐值
+    // TSC 偏移必须显式清零：VMCLEAR 后 VMCS 字段内容是未定义的，
+    // 而主控制位 use_tsc_offsetting 已经打开，若这里留着垃圾值，guest 的 RDTSC/RDTSCP
+    // 会直接读到一个乱跳的时间戳（Windows 时间子系统起步就会出问题）。
+    // 运行期由 account_vm_exit_overhead() 负责在每次时间敏感 exit 后更新该字段。
+    hv::vmwrite<unsigned __int64>(TSC_OFFSET, 0); // 初值 0 = 与物理 TSC 完全一致
     // 设置异常位图
     hv::vmwrite(EXCEPTION_BITMAP, exception_bitmap.all); // 写入异常位图
     // 配置 #PF 错误码匹配（这里设置为全部触发 VM-exit）
@@ -135,11 +140,24 @@ void fill_vmcs(__vcpu* vcpu, void* guest_rsp) // 填充 VMCS
     // 清空 VM-exit MSR 载入列表
     hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_LOAD_COUNT, 0); // 载入数量为 0
     hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_LOAD_ADDR, 0); // 载入地址为 0
-    // 清空 VM-exit MSR 保存列表与 VM-entry MSR 载入列表,避免陈旧地址被硬件使用。
-    hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_STORE_COUNT, 0);
-    hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_STORE_ADDR, 0);
-    hv::vmwrite<unsigned __int64>(VM_ENTRY_MSR_LOAD_COUNT, 0);
-    hv::vmwrite<unsigned __int64>(VM_ENTRY_MSR_LOAD_ADDR, 0);
+
+    // APERF/MPERF 是独立于 TSC 的第二条时间通道，必须单独堵：
+    // VM-exit 期间 root 里这两个计数器继续增长，guest 用 RDPMC（CR4.PCE=1 时用户态也能读）
+    // 或 RDMSR 就能反推"被虚拟化偷走的时间"，TSC offset 对它完全无效。
+    // 做法：VM-exit MSR 保存列表与 VM-entry MSR 载入列表指向**同一块内存**——
+    //   退出时硬件把 guest 的当前值存进去，进入时再把这同一份值装回物理 MSR，
+    //   root 期间的增长被整体丢弃（KVM / VMware 的标准做法），不需要在 handler 里抄值。
+    // 前置条件：条目 16 字节、物理地址、_reserved 必须为 0（否则 VM-entry MSR 加载失败）。
+    vcpu->msr_exit_store.aperf.msr_idx = IA32_APERF;
+    vcpu->msr_exit_store.aperf._reserved = 0;
+    vcpu->msr_exit_store.mperf.msr_idx = IA32_MPERF;
+    vcpu->msr_exit_store.mperf._reserved = 0;
+
+    const unsigned __int64 msrSaveAreaPhysical = MmGetPhysicalAddress(&vcpu->msr_exit_store.aperf).QuadPart;
+    hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_STORE_COUNT, 2);          // APERF + MPERF
+    hv::vmwrite<unsigned __int64>(VM_EXIT_MSR_STORE_ADDR, msrSaveAreaPhysical);
+    hv::vmwrite<unsigned __int64>(VM_ENTRY_MSR_LOAD_COUNT, 2);          // 与保存列表同址同序
+    hv::vmwrite<unsigned __int64>(VM_ENTRY_MSR_LOAD_ADDR, msrSaveAreaPhysical);
     // 清空 VM-entry 中断注入字段
     hv::vmwrite<unsigned __int64>(VM_ENTRY_INTERRUPTION_INFO_FIELD, 0); // 中断信息为 0
     hv::vmwrite<unsigned __int64>(VM_ENTRY_EXCEPTION_ERROR_CODE, 0); // 错误码为 0

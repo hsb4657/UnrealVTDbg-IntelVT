@@ -74,7 +74,12 @@ void set_primary_controls(__vmx_primary_processor_based_control& primary_control
     // 中断窗口退出：当允许中断且无阻塞时触发 VM-exit
     primary_controls.interrupt_window_exiting = false; // 关闭该功能，减少退出次数
     // 使用 TSC 偏移：对 RDTSC/RDTSCP/相关 RDMSR 返回值加偏移
-    primary_controls.use_tsc_offsetting = false; // 不使用偏移，保持真实时间戳
+    // 原理：VMCS.TSC_OFFSET 由硬件在 guest 读 TSC 时自动相加，是"隐藏虚拟化耗时"唯一不增加 exit 的手段。
+    // 作用：本配置是 _MINIMAL，RDTSC/RDTSCP 并不拦截，因此时间伪装只能靠这条硬件通路。
+    // 结果：每次时间敏感 exit 结束时由 account_vm_exit_overhead() 把 root 耗时累计进 TSC_OFFSET。
+    // 注意：被拦截的指令（CPUID 等）不会走到这里——指令在 guest 里根本没执行完，硬件不会替它加偏移，
+    //       所以不存在"硬件加一次、handler 再加一次"的重复扣减。
+    primary_controls.use_tsc_offsetting = true; // 启用 TSC 偏移，配合全局 tsc_offset 隐藏 exit 耗时
     // HLT 指令是否触发 VM-exit
     primary_controls.hlt_exiting = false; // 不拦截 HLT
 

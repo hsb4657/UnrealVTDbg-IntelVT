@@ -53,8 +53,9 @@ struct __vcpu // 每逻辑 CPU 的 VMM 状态
     // current preemption timer
     uint64_t preemption_timer; // VMX 抢占计时器
 
-    bool hide_vm_exit_overhead; // 是否隐藏 VM-Exit 开销
-    uint64_t tsc_offset; // TSC 偏移量
+    bool hide_vm_exit_overhead; // 时间敏感 exit 标记：只由 CPUID/RDMSR/WRMSR/RDTSC/RDTSCP/XSETBV 等路径置位
+    uint64_t tsc_offset; // 旧版按 vCPU 累计的 TSC 偏移（已废弃：跨核各自累计会漂移，统一改用 __vmm_context::tsc_offset）
+    uint64_t last_visible_tsc; // guest 可见 TSC 的单调护栏：所有时间源都经 guest_visible_tsc() 取值，严禁回退
 
     // the overhead caused by world-transitions
     uint64_t vm_exit_tsc_overhead; // VM-Exit TSC 开销
@@ -285,6 +286,10 @@ struct __vmm_context // 全局 VMM 上下文
     unsigned __int32 highest_basic_leaf; // CPUID 最大基础叶
     unsigned __int64 platform_max_physical_end; // 全平台最大物理地址上界（各逻辑处理器 CPUID.80000008H 取最大值），EPT 覆盖范围按它计算
     bool hv_presence;  //标识hy对象已经创建
+    // guest 可见 TSC 的全局累计偏移（负数 = 已从 guest 时间中扣除的 root 时间）。
+    // 必须全局共享：所有逻辑处理器都从同一条物理 TSC 出发，只有共享同一个偏移才能保持跨核时间一致；
+    // 若各 vCPU 各自累计，多核 TSC 会互相漂移，漂移本身就是"存在 hypervisor"的证据。
+    volatile LONG64 tsc_offset;
     volatile hv::vmm_release_policy::lifecycle_state lifecycle_state; // VMM 资源所有权阶段
 };
 

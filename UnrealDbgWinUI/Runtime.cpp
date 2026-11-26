@@ -1173,6 +1173,8 @@ namespace unrealdbg_native
         add(L"DbgkSysWin10.sys", ExistingPath(L"DbgkSysWin10.sys"));
         add(L"DbgkSysWin11.sys", ExistingPath(L"DbgkSysWin11.sys"));
         add(L"VT_Driver.sys", ExistingPath(L"VT_Driver.sys"));
+        add(L"RTCore64.sys", ExistingPath(L"RTCore64.sys"));
+        add(L"iqvw64e.sys", ExistingPath(L"iqvw64e.sys"));
         add(L"AIHelper.dll", ExistingPath(L"AIHelper.dll"));
         add(L"VMProtectSDK64.dll", ExistingPath(L"VMProtectSDK64.dll"));
     }

@@ -59,13 +59,15 @@ void vmexit_rdtscp_handler(__vcpu* vcpu) // 模拟 RDTSCP，返回 TSC 和处理
 {
 	sLog("\n"); // 记录时间读取路径，便于分析反虚拟化检测。
 	unsigned __int32 processor_id; // 接收 RDTSCP 返回的 IA32_TSC_AUX。
-	unsigned __int64 tsc = __rdtscp(&processor_id); // 在 host 执行 RDTSCP，随后拆分写回 guest 寄存器。
+	__rdtscp(&processor_id); // 只借用指令取 TSC_AUX：时间戳本身必须走统一时间源，不能用这里读到的物理值。
+	unsigned __int64 tsc = guest_visible_tsc(vcpu); // 统一时间源：exit 入口 TSC + 全局偏移。
 
 	// 下面三行将 RDTSCP 的输出写回到来宾寄存器，等价于来宾自己执行了 RDTSCP
 	vcpu->vmexit_info.guest_registers->rcx = processor_id; // RDTSCP 约定 ECX 返回 TSC_AUX。
 	vcpu->vmexit_info.guest_registers->rdx = MASK_GET_HIGHER_32BITS(tsc) >> 32; // RDX 返回 TSC 高 32 位。
 	vcpu->vmexit_info.guest_registers->rax = MASK_GET_LOWER_32BITS(tsc); // RAX 返回 TSC 低 32 位。
 
+	set_hide_vm_exit_overhead(vcpu, true); // 时间读取路径也要对账，否则 handler 自身的耗时会串进下一次采样。
 	adjust_rip(vcpu); // 模拟完成后推进 RIP。
 }
 
@@ -144,14 +146,17 @@ void vmexit_xsetbv_handler(__vcpu* vcpu) // 模拟 XSETBV，严格验证 XCR0 �
 }
 
 //处理 RDTSC 指令：读取时间戳计数器 TSC，并按 EDX:EAX 返回给来宾
-void vmexit_rdtsc_handler(__vcpu* vcpu) // 模拟 RDTSC，返回 host TSC 拆分值。
+void vmexit_rdtsc_handler(__vcpu* vcpu) // 模拟 RDTSC，返回统一时间源的 TSC 拆分值。
 {
 	sLog("\n"); // 记录时间读取路径。
-	unsigned __int64 tsc = __rdtsc(); // 在 host 执行 RDTSC，后续可由时间隐藏逻辑修正开销。
+	// 不能直接用 __rdtsc()：那是 handler 当下时刻，已经把 exit 与 handler 开销算进去了，
+	// 用 rdtsc 前后包一条 CPUID 就能稳定测出虚拟化。统一时间源会把这部分扣干净。
+	unsigned __int64 tsc = guest_visible_tsc(vcpu);
 
 	vcpu->vmexit_info.guest_registers->rdx = MASK_GET_HIGHER_32BITS(tsc) >> 32; // RDX 返回高 32 位。
 	vcpu->vmexit_info.guest_registers->rax = MASK_GET_LOWER_32BITS(tsc); // RAX 返回低 32 位。
 
+	set_hide_vm_exit_overhead(vcpu, true); // 时间读取路径也要对账，否则 handler 耗时会串进下一次采样。
 	adjust_rip(vcpu); // 模拟完成后推进 RIP。
 }
 

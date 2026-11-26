@@ -18,8 +18,14 @@
     <Filter Include="源文件\Init">
       <UniqueIdentifier>{e7997350-8ce9-46ab-ae63-2926cb710ec8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="源文件\KernelBridge">
+      <UniqueIdentifier>{6f3f1a52-9d7c-4c2e-9f21-0b7d5c8e4a11}</UniqueIdentifier>
+    </Filter>
     <Filter Include="头文件\Init">
       <UniqueIdentifier>{20b4b62f-e882-4405-a4ca-f2902cbb8870}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\KernelBridge">
+      <UniqueIdentifier>{a1c9e0d4-5b82-4f67-8d33-2e6a9b1c7f50}</UniqueIdentifier>
     </Filter>
     <Filter Include="源文件\Common">
       <UniqueIdentifier>{9ada8595-44f1-48f4-92c3-a760e933ec73}</UniqueIdentifier>
@@ -91,6 +97,9 @@
     </ClCompile>
     <ClCompile Include="Init\InitNTDevice.cpp">
       <Filter>源文件\Init</Filter>
+    </ClCompile>
+    <ClCompile Include="KernelBridge\KernDrv.cpp">
+      <Filter>源文件\KernelBridge</Filter>
     </ClCompile>
     <ClCompile Include="..\Common\FileSystem\FileSystem.cpp">
       <Filter>源文件\Common\FileSystem</Filter>
@@ -165,6 +174,9 @@
     </ClInclude>
     <ClInclude Include="Init\InitNTDevice.h">
       <Filter>头文件\Init</Filter>
+    </ClInclude>
+    <ClInclude Include="KernelBridge\KernDrv.h">
+      <Filter>头文件\KernelBridge</Filter>
     </ClInclude>
     <ClInclude Include="..\Common\FileSystem\FileSystem.h">
       <Filter>头文件\Common\FileSystem</Filter>

@@ -13,6 +13,10 @@
 
 namespace
 {
+	// IA32_TIME_STAMP_COUNTER（MSR 0x10）。ia32_defines_only.h 没有生成这个常量，
+	// 但它是 guest 能读到的第三条时间通路（RDTSC/RDTSCP/RDMSR），必须走统一时间源。
+	constexpr unsigned __int32 kIa32TscMsr = 0x00000010;
+
 	bool is_valid_pat_value(unsigned __int64 value)
 	{
 		for (unsigned int index = 0; index < 8; ++index)
@@ -232,6 +236,14 @@ void vmexit_msr_read_handler(__vcpu* vcpu) // vcpu=当前虚拟CPU状态
 	case IA32_PAT:
 	{
 		msr.all = hv::vmread(GUEST_PAT); // Guest PAT 由 VMCS 持有，VM-exit 后硬件 PAT 已是 Host PAT。
+		break;
+	}
+	case kIa32TscMsr:
+	{
+		// 完整模式下 MSR 位图全拦截，RDMSR(0x10) 会走到这里；
+		// 精简模式下该 MSR 不拦截，由硬件 TSC offsetting 直接平移，语义一致。
+		// 两条路都返回"exit 入口 TSC + 全局偏移"，与 RDTSC/RDTSCP 保持同一个时间真相。
+		msr.all = guest_visible_tsc(vcpu);
 		break;
 	}
 	case IA32_EFER:

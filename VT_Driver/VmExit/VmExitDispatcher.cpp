@@ -239,6 +239,18 @@ bool vmexit_handler(guest_context* guest_registers, PFXSAVE64 fxsave) // VM-exit
 	dispatch_vm_exit(vcpu); // 根据 exit reason 执行模拟、注入异常、EPT 切换或 VMCALL 服务。
 	record_vmexit_telemetry(vcpu, telemetryStartTsc);
 
+	// 时间开销对账：只有 handler 主动置位 hide_vm_exit_overhead 的 exit 才扣。
+	// 原理：guest 检测虚拟化最省事的手段就是「rdtsc → 一条被拦截的指令 → rdtsc」，
+	//       凡是差值里多出来的 root 时间都是证据；扣掉之后差值只剩裸机同款开销。
+	// 作用：把 CPUID/MSR/MOV CR 这类模拟路径的时间戳尖峰压回硬件 exit/entry 延迟量级。
+	// 结果：全局 tsc_offset 单调递减，并由 guest_visible_tsc() 的单调护栏保证 guest 时间不回退。
+	// 注意：绝不能对所有 exit 都扣——EPT violation 在本项目里是常态（hook 全靠它），
+	//       无差别扣减会让 guest 时钟比真实时间越走越慢，反而成为另一个可测特征。
+	if (vcpu->hide_vm_exit_overhead)
+	{
+		account_vm_exit_overhead(vcpu, telemetryStartTsc);
+	}
+
 	if (vcpu->vmx_off_state.vmx_off_executed) // VMCALL/退出流程要求关闭 VMX 时，由汇编上层执行最终 VMXOFF。
 	{
 		if (!PrepareGuestForVmxoff(vcpu))

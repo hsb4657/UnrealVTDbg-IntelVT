@@ -1,17 +1,12 @@
 ﻿#include "../dllmain.h"
 #include "InitNTDevice.h"
 #include "../Crypter/xorstr.hpp"
+#include "../KernelBridge/KernDrv.h"
 
 
-//加载NT驱动
-typedef BOOL(__stdcall* PFN_LOADNT)(const std::wstring DriveImagePath, const std::wstring ServiceName);
-//卸载NT驱动
-typedef BOOL(__stdcall* PFN_UNLOADNT)(const std::wstring ServiceName);
-
+//驱动装载已改由 KernelBridge 完成（KDU sup.c 移植），AIHelper 只保留日志通道
 typedef int(__stdcall* PFN_OUTDEBUG)(const TCHAR* _Format, ...);
 
-PFN_LOADNT pfnLoadNT;
-PFN_UNLOADNT pfnUnloadNT;
 PFN_OUTDEBUG outDebug;
 HMODULE g_aiHelperModule;
 
@@ -280,7 +275,7 @@ HANDLE CreateDeviceHandle(const std::wstring DriveImagePath, const std::wstring 
         logger.outDebug(_xor_(L"驱动服务不存在，执行原始安装流程。(service:%s)"), ServiceName.c_str());
     }
 
-    const BOOL loadResult = pfnLoadNT(DriveImagePath, ServiceName);
+    const BOOL loadResult = kern::LoadDriverImage(DriveImagePath, ServiceName) ? TRUE : FALSE;
     if (!loadResult)
     {
         logger.outDebug(_xor_(L"驱动服务安装失败。(service:%s error:%lu)"), ServiceName.c_str(), GetLastError());
@@ -329,7 +324,7 @@ BOOL LoadVT(const std::wstring DriveImagePath, const std::wstring ServiceName)
         logger.outDebug(_xor_(L"VT 驱动服务不存在，执行原始安装流程。(service:%s)"), ServiceName.c_str());
     }
 
-    const BOOL loadResult = pfnLoadNT(DriveImagePath, ServiceName);
+    const BOOL loadResult = kern::LoadDriverImage(DriveImagePath, ServiceName) ? TRUE : FALSE;
     if (!loadResult)
     {
         logger.outDebug(_xor_(L"VT 驱动服务安装失败。(service:%s error:%lu)"), ServiceName.c_str(), GetLastError());
@@ -351,22 +346,18 @@ BOOL LoadGeneralDriver(const std::wstring DriveImagePath, const std::wstring Ser
     }
 }
 
-//初始化驱动设备
-BOOL InitializeDevice(const std::wstring DriveImagePath)
+//装载整条驱动栈：VT 引擎 + 调试子系统
+//返回 FALSE 时调用方决定是否走 DSE 绕过重试
+static BOOL InstallDriverStack(const std::wstring& DriveImagePath)
 {
-    std::lock_guard<std::recursive_mutex> lock(g_driverDeviceMutex);
     BOOL bRet = TRUE;
-
-    //if (!UnInitialize_END) {
-    //    return FALSE;
-    //}
 
     if (!LoadVT(DriveImagePath + _xor_(L"VT_Driver.sys"), _xor_(L"VT_Driver")))
     {
         return FALSE;
     }
 
-    DWORD dwMajorVer, dwMinorVer, dwBuildNumber, error;
+    DWORD dwMajorVer = 0, dwMinorVer = 0, dwBuildNumber = 0, error = 0;
     if (Common::GetNtVersionNumbers(dwMajorVer, dwMinorVer, dwBuildNumber))
     {
         if (dwBuildNumber >= 22000)
@@ -392,7 +383,62 @@ BOOL InitializeDevice(const std::wstring DriveImagePath)
         logger.outDebug(_xor_(L"无法获取系统版本信息! (error:%d)"), error);
         bRet = FALSE;
     }
+
     return bRet;
+}
+
+//初始化驱动设备
+BOOL InitializeDevice(const std::wstring DriveImagePath)
+{
+    std::lock_guard<std::recursive_mutex> lock(g_driverDeviceMutex);
+
+    // KDU hvdetect 移植：先看清宿主环境，VMXON 失败时能直接归因
+    const kern::HostEnv hostEnv = kern::QueryHostEnv();
+    logger.outDebug(_xor_(L"[环境] %s"), kern::DescribeHostEnv(hostEnv).c_str());
+    if (hostEnv.hypervisorPresent)
+    {
+        logger.outDebug(_xor_(L"[环境] 检测到已在运行的 Hypervisor(%s)，VMXON 可能失败；"
+                              L"若 VT 初始化报错，先关闭 Hyper-V/VBS/内存完整性。"),
+            hostEnv.hypervisorVendor[0] ? hostEnv.hypervisorVendor : L"未知");
+    }
+
+    // 装载顺序比任何隐藏手段都值钱：反作弊驱动一旦先驻留，它已经在用
+    // PsSetLoadImageNotifyRoutine 盯着映像装载，此刻再装什么都会被记一条事件——
+    // 那条事件是不可撤回的，事后隐藏链表/删文件都补不回来。
+    const std::wstring residentAntiCheat = kern::DetectResidentAntiCheat();
+    if (!residentAntiCheat.empty())
+    {
+        logger.outDebug(_xor_(L"[顺序] 反作弊驱动已驻留：%s。此刻装载 VT 驱动会被 LoadImageNotify 直接记录，"
+                              L"建议改成「先起调试器、后起游戏」的顺序。"), residentAntiCheat.c_str());
+    }
+    else
+    {
+        logger.outDebug(_xor_(L"[顺序] 未发现已知反作弊内核模块，当前是干净的装载时机。"));
+    }
+
+    // 第一轮：按系统默认签名策略装载。驱动已签名或测试签名已开启时，这一轮就够了，
+    // 不需要引入任何漏驱，避免无谓的内核攻击面扩大。
+    logger.outDebug(_xor_(L"[装载] 第一轮：按默认签名策略装载驱动栈。"));
+    if (InstallDriverStack(DriveImagePath))
+    {
+        return TRUE;
+    }
+
+    // 第二轮：只有第一轮失败才临时关闭 DSE 重试，装完立刻还原
+    logger.outDebug(_xor_(L"[DSE] 首轮装载失败，尝试漏驱临时关闭驱动签名强制后重试。"));
+    if (!kern::BeginDseBypass(DriveImagePath))
+    {
+        logger.outDebug(_xor_(L"[DSE] 无法关闭驱动签名强制，驱动栈装载失败。"));
+        return FALSE;
+    }
+
+    logger.outDebug(_xor_(L"[DSE] 已临时关闭驱动签名强制（provider=%s）。"),
+        kern::GetActiveProviderName());
+
+    const BOOL result = InstallDriverStack(DriveImagePath);
+
+    kern::EndDseBypass();
+    return result;
 }
 
 //初始化接口
@@ -400,7 +446,7 @@ BOOL InitInterface(const std::wstring& runtimePath)
 {
     if (g_aiHelperModule != nullptr)
     {
-        return pfnLoadNT != nullptr && pfnUnloadNT != nullptr && outDebug != nullptr;
+        return outDebug != nullptr;
     }
 
     const std::wstring aiHelperPath = runtimePath + _xor_(L"AIHelper.dll");
@@ -413,16 +459,12 @@ BOOL InitInterface(const std::wstring& runtimePath)
         ::MessageBox(NULL, (L"没有找到 AIHelper.dll"), (L"错误信息:"), MB_ICONWARNING);
         return FALSE;
     }
-    pfnLoadNT = (PFN_LOADNT)GetProcAddress(g_aiHelperModule,     _xor_("LoadNT"));
-    pfnUnloadNT = (PFN_UNLOADNT)GetProcAddress(g_aiHelperModule, _xor_("UnloadNT"));
-    outDebug = (PFN_OUTDEBUG)GetProcAddress(g_aiHelperModule,    _xor_("outDebug"));
+    outDebug = (PFN_OUTDEBUG)GetProcAddress(g_aiHelperModule, _xor_("outDebug"));
 
-    if (pfnLoadNT == nullptr || pfnUnloadNT == nullptr || outDebug == nullptr)
+    if (outDebug == nullptr)
     {
         FreeLibrary(g_aiHelperModule);
         g_aiHelperModule = nullptr;
-        pfnLoadNT = nullptr;
-        pfnUnloadNT = nullptr;
         outDebug = nullptr;
         ::MessageBox(NULL, (L"AIHelper.dll 接口不完整"), _xor_(L"错误信息:"), MB_ICONWARNING);
         return FALSE;
@@ -494,10 +536,10 @@ BOOL UnInitialize()
         auto state = QueryDriverServiceState(name);
         if (state == DriverServiceState::NotFound || state == DriverServiceState::Stopped)
             return TRUE;
-        if (state == DriverServiceState::QueryFailed || pfnUnloadNT == nullptr)
+        if (state == DriverServiceState::QueryFailed)
             return FALSE;
-        // A helper's return value alone does not establish that the driver stopped.
-        (void)pfnUnloadNT(name);
+        // SCM 停止最终走到 NtUnloadDriver；再删掉服务键，避免残留服务。
+        (void)DeleteDriverService(name);
         state = QueryDriverServiceState(name);
         return state == DriverServiceState::NotFound || state == DriverServiceState::Stopped;
     };

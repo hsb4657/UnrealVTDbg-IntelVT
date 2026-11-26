@@ -178,6 +178,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="Globals.cpp" />
     <ClCompile Include="Init\InitNTDevice.cpp" />
+    <ClCompile Include="KernelBridge\KernDrv.cpp" />
     <ClCompile Include="Interface\Interface.cpp" />
     <ClCompile Include="NetVerHelp\Help_Source\CJsonObject.cpp" />
     <ClCompile Include="NetVerHelp\Help_Source\HttpRequestTool.cpp" />
@@ -200,6 +201,7 @@
     <ClInclude Include="dllmain.h" />
     <ClInclude Include="Globals.h" />
     <ClInclude Include="Init\InitNTDevice.h" />
+    <ClInclude Include="KernelBridge\KernDrv.h" />
     <ClInclude Include="Interface\Interface.h" />
     <ClInclude Include="NetVerHelp\Help_Tou\cJSON.h" />
     <ClInclude Include="NetVerHelp\Help_Tou\CJsonObject.hpp" />

@@ -301,6 +301,9 @@ void set_hide_vm_exit_overhead(__vcpu* vcpu, bool value) // 设置“隐藏 VM-e
 	vcpu->hide_vm_exit_overhead = value; // 将外部传入的布尔值写入 vCPU 状态，用于控制是否执行隐藏开销的策略
 }
 
+// 已废弃：旧实现按 vCPU 各自累计 tsc_offset，既没有写进 VMCS，也从没有任何调用点，
+// 属于死代码。时间开销对账已由 account_vm_exit_overhead() 接管（全局偏移 + 单调护栏），
+// 本函数保留原样只为兼容历史调用点，不得再被启用。
 void hide_vm_exit_overhead(__vcpu* vcpu)
 {
 	ia32_perf_global_ctrl_register perf_global_ctrl; // 定义 PERF_GLOBAL_CTRL 的解析结构体，便于按位访问控制字段
@@ -343,6 +346,60 @@ void hide_vm_exit_overhead(__vcpu* vcpu)
 
 	// 通过 TSC offsetting 抵消 VM-exit 开销，让来宾读到“被平移后的 TSC”。// 硬件原理：VMCS 的 TSC_OFFSET 会加到来宾 TSC
 	vcpu->tsc_offset -= vcpu->vm_exit_tsc_overhead; // 直接减去测得的开销，相当于把来宾时间“拉回去”
+}
+
+// 统一时间源：guest 侧任何 TSC 读取都必须经过这里。
+// 原理：guest 能直接读到的时间只有三类——RDTSC、RDTSCP、RDMSR(IA32_TSC)，三条全部被拦截，
+//       所以"guest 看到的时间"完全由本函数决定，不存在第二个真相。
+// 基准取「VM-exit 入口 TSC」（vmexit_handler 第一行采集），不是 handler 内当下的 __rdtsc()：
+//       后者会把本次 handler 的执行时间打进返回值，而 CPUID/MSR 模拟动辄上千周期，
+//       用 rdtsc 前后包一条 CPUID 的老套路一测就露。
+// 加上全局偏移，则连之前所有 exit 已经消耗掉的 root 时间也一并扣除，差值只剩硬件 exit/entry 延迟（常量）。
+unsigned __int64 guest_visible_tsc(__vcpu* vcpu)
+{
+	unsigned __int64 const base = vcpu->vmexit_info.vmx_root_enter_tsc; // 本次 exit 进入 root 时的物理 TSC
+	LONG64 const offset = g_vmm_context.tsc_offset; // 全局累计偏移（负数），64 位对齐读在 x64 上是原子的
+	unsigned __int64 visible = base + static_cast<unsigned __int64>(offset); // 补码相加：负偏移等价于减法
+
+	// 单调护栏：多核同时改偏移时，guest 可能观察到一次"时间倒退"，
+	// 而时间倒退比暴露 hypervisor 更容易被 Windows 时间子系统直接判死，所以这里宁可短暂冻结。
+	if (visible < vcpu->last_visible_tsc)
+	{
+		visible = vcpu->last_visible_tsc;
+	}
+	vcpu->last_visible_tsc = visible;
+	return visible;
+}
+
+// 每次时间敏感 VM-exit 结束时对账：把本核在 root 里花掉的 TSC 时间从全局偏移里扣掉。
+// 原理：guest 可见时间 = 物理 TSC + 偏移。若每次 exit 都把 root 时间计入偏移（负向），
+//       则 guest 的任意两次时间采样之间，被虚拟化偷走的时间会被自动抵消，
+//       等价于"这台机器没有 VM-exit"。
+// 作用：让 rdtsc;cpuid;rdtsc 这类检测序列读到的差值回到裸机量级。
+// 注意：偏移必须全局共享。各核各扣各的会让多核 TSC 互相漂移，漂移本身也是证据。
+void account_vm_exit_overhead(__vcpu* vcpu, unsigned __int64 exit_start_tsc)
+{
+	unsigned __int64 cost = __rdtsc() - exit_start_tsc; // 本核本次在 root 中消耗的 TSC
+
+	// 上限保护：单次 exit 极端耗时（调度抖动、调试输出、EPT 风暴）不允许把 guest 时钟一次性拽走。
+	constexpr unsigned __int64 kMaxSingleExitCost = 200000;
+	if (cost > kMaxSingleExitCost)
+	{
+		cost = kMaxSingleExitCost;
+	}
+
+	// vm_exit_ref_tsc_overhead 是留给"硬件 exit/entry 延迟"的标定量（默认 0 = 只扣 handler 时间）。
+	// 该值无法在 root 里精确测得，需要在真实机器上校准后下发；填错只会让 guest 时钟稍微快/慢，不会蓝屏。
+	unsigned __int64 const hide = cost + vcpu->vm_exit_ref_tsc_overhead;
+	const LONG64 previous_offset = InterlockedExchangeAdd64(
+		&g_vmm_context.tsc_offset,
+		-static_cast<LONG64>(hide));
+	const LONG64 new_offset = previous_offset - static_cast<LONG64>(hide);
+
+	// 同时把偏移写进 VMCS：MINIMAL 模式下 RDTSC/RDTSCP 不被拦截，只有硬件 TSC offsetting 能生效；
+	// 完整模式下指令已经被拦截、由 guest_visible_tsc() 自己加偏移，硬件不会重复应用
+	// （被拦截的指令在 guest 里并没有执行完，TSC_OFFSET 对它不起作用）。
+	hv::vmwrite<unsigned __int64>(TSC_OFFSET, static_cast<unsigned __int64>(new_offset));
 }
 
 void skip_instruction() // 在 VM-exit 后“跳过当前指令”，模拟该指令已在来宾中执行完成
